@@ -1,5 +1,6 @@
 package com.example.auth
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.util.Log
@@ -25,6 +26,20 @@ import kotlinx.coroutines.withContext
 object GoogleAuthHelper {
   private const val TAG = "Auth"
 
+  @SuppressLint("DiscouragedApi")
+  private fun resolveDefaultWebClientId(context: Context): String? {
+    val appContext = context.applicationContext
+    val resId = appContext.resources.getIdentifier(
+      "default_web_client_id",
+      "string",
+      appContext.packageName,
+    )
+    if (resId == 0) return null
+    return runCatching { appContext.getString(resId).trim() }
+      .getOrNull()
+      ?.takeIf { it.isNotEmpty() }
+  }
+
   fun attemptAutoSignIn(
     context: Context,
     credentialManager: CredentialManager,
@@ -36,9 +51,7 @@ object GoogleAuthHelper {
       onAuthSuccess()
       return
     }
-    val clientId = try {
-      context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
+    val clientId = resolveDefaultWebClientId(context) ?: run {
       onUnauthenticated()
       return
     }
@@ -75,9 +88,7 @@ object GoogleAuthHelper {
     onAuthError: (String) -> Unit,
     onAuthCancelled: () -> Unit,
   ) {
-    val clientId = try {
-      context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
+    val clientId = resolveDefaultWebClientId(context) ?: run {
       onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
       return
     }
