@@ -1,0 +1,6 @@
+{
+  "name": "Local Ride Driver",
+  "description": "Multilingual Toto and local ride driver app in Bengali, Hindi, and English with step-by-step onboarding, live ride requests, and profile management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

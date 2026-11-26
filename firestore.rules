@@ -1,0 +1,195 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny all access unless explicitly matched below.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidLanguage(lang) {
+      return lang in ['bn', 'hi', 'en'];
+    }
+
+    function isValidVehicleType(v) {
+      return v in ['toto', 'auto', 'bike'];
+    }
+
+    function isValidDriverStatus(s) {
+      return s in ['pending_or_active', 'active'];
+    }
+
+    function isValidDriver(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.email is string && data.email.size() <= 200 &&
+             data.language is string && isValidLanguage(data.language) &&
+             data.vehicleType is string && isValidVehicleType(data.vehicleType) &&
+             data.district is string && data.district.size() >= 2 && data.district.size() <= 80 &&
+             data.village is string && data.village.size() >= 1 && data.village.size() <= 120 &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+             data.mobileNumber is string && data.mobileNumber.size() >= 10 && data.mobileNumber.size() <= 15 &&
+             data.totoColor is string && data.totoColor.size() >= 2 && data.totoColor.size() <= 40 &&
+             data.totoColorHex is string && data.totoColorHex.size() >= 4 && data.totoColorHex.size() <= 12 &&
+             data.status is string && isValidDriverStatus(data.status) &&
+             data.isOnline is bool &&
+             data.lat is number && data.lat >= -90.0 && data.lat <= 90.0 &&
+             data.lng is number && data.lng >= -180.0 && data.lng <= 180.0 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time &&
+             (!('vehicleNumber' in data) || (data.vehicleNumber is string && data.vehicleNumber.size() <= 30)) &&
+             (!('emergencyContact' in data) || (data.emergencyContact is string && data.emergencyContact.size() <= 20)) &&
+             (!('passportPhotoBase64' in data) || (data.passportPhotoBase64 is string && data.passportPhotoBase64.size() <= 300000)) &&
+             (!('aadhaarFrontBase64' in data) || (data.aadhaarFrontBase64 is string && data.aadhaarFrontBase64.size() <= 300000)) &&
+             (!('aadhaarBackBase64' in data) || (data.aadhaarBackBase64 is string && data.aadhaarBackBase64.size() <= 300000));
+    }
+
+    function isValidRideStatus(s) {
+      return s in ['pending', 'accepted', 'completed', 'cancelled'];
+    }
+
+    function isValidRide(data) {
+      return data.passengerId is string && data.passengerId.size() >= 1 && data.passengerId.size() <= 128 &&
+             data.passengerName is string && data.passengerName.size() >= 1 && data.passengerName.size() <= 100 &&
+             data.pickupVillage is string && data.pickupVillage.size() >= 1 && data.pickupVillage.size() <= 160 &&
+             data.destination is string && data.destination.size() >= 1 && data.destination.size() <= 160 &&
+             data.status is string && isValidRideStatus(data.status) &&
+             data.driverId is string && data.driverId.size() <= 128 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time &&
+             (!('pickupLat' in data) || (data.pickupLat is number && data.pickupLat >= -90.0 && data.pickupLat <= 90.0)) &&
+             (!('pickupLng' in data) || (data.pickupLng is number && data.pickupLng >= -180.0 && data.pickupLng <= 180.0)) &&
+             (!('voiceNoteUrl' in data) || (data.voiceNoteUrl is string && data.voiceNoteUrl.size() <= 300000)) &&
+             (!('driverName' in data) || (data.driverName is string && data.driverName.size() <= 100)) &&
+             (!('vehicleType' in data) || (data.vehicleType is string && data.vehicleType.size() <= 30)) &&
+             (!('district' in data) || (data.district is string && data.district.size() <= 80)) &&
+             (!('rejectedBy' in data) || (data.rejectedBy is list && data.rejectedBy.size() <= 50 && (data.rejectedBy.size() == 0 || data.rejectedBy[0] is string)));
+    }
+
+    // Drivers collection: strictly isolated per authenticated driver UID (PII protected)
+    match /toto_drivers/{driverId} {
+      allow get: if isSignedIn() && isValidId(driverId) && request.auth.uid == driverId;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(driverId) &&
+                       request.auth.uid == driverId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'email', 'language', 'vehicleType', 'district', 'village',
+                         'fullName', 'mobileNumber', 'totoColor', 'totoColorHex',
+                         'status', 'isOnline', 'lat', 'lng', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'email', 'language', 'vehicleType', 'district', 'village',
+                         'fullName', 'mobileNumber', 'totoColor', 'totoColorHex',
+                         'vehicleNumber', 'emergencyContact',
+                         'passportPhotoBase64', 'aadhaarFrontBase64', 'aadhaarBackBase64',
+                         'status', 'isOnline', 'lat', 'lng', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().createdAt <= request.time &&
+                       isValidDriver(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(driverId) &&
+                       request.auth.uid == driverId &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidDriver(incoming()) && (
+                         // Action 1: Toggle online status & update GPS coordinates
+                         incoming().diff(existing()).affectedKeys().hasOnly(['isOnline', 'lat', 'lng', 'updatedAt']) ||
+                         // Action 2: Edit driver profile / language / documents
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'language', 'vehicleType', 'district', 'village',
+                           'fullName', 'mobileNumber', 'totoColor', 'totoColorHex',
+                           'vehicleNumber', 'emergencyContact',
+                           'passportPhotoBase64', 'aadhaarFrontBase64', 'aadhaarBackBase64',
+                           'updatedAt'
+                         ])
+                       );
+
+      allow delete: if isSignedIn() && isValidId(driverId) && request.auth.uid == driverId && existing().userId == request.auth.uid;
+    }
+
+    // Rides collection: pending queue readable by signed-in drivers; assigned rides isolated to driver or passenger
+    match /toto_rides/{rideId} {
+      allow get: if isSignedIn() && isValidId(rideId) && (
+        existing().status == 'pending' ||
+        existing().driverId == request.auth.uid ||
+        existing().passengerId == request.auth.uid
+      );
+
+      allow list: if isSignedIn() && (
+        resource.data.status == 'pending' ||
+        resource.data.driverId == request.auth.uid ||
+        resource.data.passengerId == request.auth.uid
+      );
+
+      allow create: if isSignedIn() &&
+                       isValidId(rideId) &&
+                       incoming().passengerId == request.auth.uid &&
+                       incoming().status == 'pending' &&
+                       incoming().driverId == '' &&
+                       incoming().keys().hasAll([
+                         'passengerId', 'passengerName', 'pickupVillage', 'destination',
+                         'status', 'driverId', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'passengerId', 'passengerName', 'pickupVillage', 'destination',
+                         'pickupLat', 'pickupLng', 'voiceNoteUrl', 'status',
+                         'driverId', 'driverName', 'vehicleType', 'district', 'rejectedBy',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().createdAt <= request.time &&
+                       isValidRide(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(rideId) &&
+                       isValidRide(incoming()) &&
+                       existing().status != 'completed' &&
+                       existing().status != 'cancelled' &&
+                       incoming().passengerId == existing().passengerId &&
+                       incoming().createdAt == existing().createdAt && (
+                         // Action 1: Driver accepts a pending ride
+                         (existing().status == 'pending' &&
+                          incoming().status == 'accepted' &&
+                          incoming().driverId == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'driverId', 'driverName', 'updatedAt'])) ||
+                         // Action 2: Driver declines/rejects a pending ride (adds own UID to rejectedBy)
+                         (existing().status == 'pending' &&
+                          incoming().status == 'pending' &&
+                          incoming().driverId == '' &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['rejectedBy', 'updatedAt'])) ||
+                         // Action 3: Assigned driver completes or cancels an accepted ride
+                         (existing().status == 'accepted' &&
+                          existing().driverId == request.auth.uid &&
+                          incoming().driverId == existing().driverId &&
+                          incoming().status in ['completed', 'cancelled'] &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+                       );
+
+      allow delete: if false;
+    }
+
+    // App version settings: read-only for signed-in drivers
+    match /app_settings/{settingId} {
+      allow get: if isSignedIn() && settingId == 'driver_app_version';
+      allow list, create, update, delete: if false;
+    }
+  }
+}

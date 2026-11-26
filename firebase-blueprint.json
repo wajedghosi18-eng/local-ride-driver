@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "TotoDriver": {
+      "title": "TotoDriver",
+      "description": "Registered Local Ride Driver profile with onboarding selections, compressed base64 KYC/selfie images, and live online/GPS status.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the driver." },
+        "email": { "type": "string", "description": "Google account email address." },
+        "language": { "type": "string", "enum": ["bn", "hi", "en"], "description": "Preferred UI language code." },
+        "vehicleType": { "type": "string", "enum": ["toto", "auto", "bike"], "description": "Selected vehicle category." },
+        "district": { "type": "string", "description": "Selected West Bengal district." },
+        "village": { "type": "string", "description": "Selected or GPS-resolved village/town." },
+        "fullName": { "type": "string", "description": "Driver full name." },
+        "mobileNumber": { "type": "string", "description": "10-digit mobile/WhatsApp number." },
+        "totoColor": { "type": "string", "description": "Display name of the Toto/vehicle color." },
+        "totoColorHex": { "type": "string", "description": "Hex color code for badge display." },
+        "vehicleNumber": { "type": "string", "description": "Optional vehicle registration number." },
+        "emergencyContact": { "type": "string", "description": "Optional emergency contact number." },
+        "passportPhotoBase64": { "type": "string", "description": "Compressed JPEG Base64 passport selfie." },
+        "aadhaarFrontBase64": { "type": "string", "description": "Compressed JPEG Base64 Aadhaar front image." },
+        "aadhaarBackBase64": { "type": "string", "description": "Compressed JPEG Base64 Aadhaar back image." },
+        "status": { "type": "string", "enum": ["pending_or_active", "active"], "description": "Driver registration status." },
+        "isOnline": { "type": "boolean", "description": "Whether the driver is currently online for passengers." },
+        "lat": { "type": "number", "description": "Driver latitude." },
+        "lng": { "type": "number", "description": "Driver longitude." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp (FieldValue.serverTimestamp)." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server last-updated timestamp (FieldValue.serverTimestamp)." }
+      },
+      "required": [
+        "userId",
+        "email",
+        "language",
+        "vehicleType",
+        "district",
+        "village",
+        "fullName",
+        "mobileNumber",
+        "totoColor",
+        "totoColorHex",
+        "status",
+        "isOnline",
+        "lat",
+        "lng",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TotoRide": {
+      "title": "TotoRide",
+      "description": "Ride request document without fare/pricing fields, supporting real-time pending queue, driver acceptance, rejection tracking, and completion.",
+      "type": "object",
+      "properties": {
+        "passengerId": { "type": "string", "description": "Passenger UID." },
+        "passengerName": { "type": "string", "description": "Passenger display name." },
+        "pickupVillage": { "type": "string", "description": "Pickup village or address." },
+        "destination": { "type": "string", "description": "Drop destination village or address." },
+        "pickupLat": { "type": "number", "description": "Pickup latitude." },
+        "pickupLng": { "type": "number", "description": "Pickup longitude." },
+        "voiceNoteUrl": { "type": "string", "description": "Optional audio URL or data URI for passenger voice note." },
+        "status": { "type": "string", "enum": ["pending", "accepted", "completed", "cancelled"], "description": "Ride lifecycle status." },
+        "driverId": { "type": "string", "description": "Assigned driver UID, empty while pending." },
+        "driverName": { "type": "string", "description": "Assigned driver display name." },
+        "vehicleType": { "type": "string", "description": "Requested vehicle type." },
+        "district": { "type": "string", "description": "District name." },
+        "rejectedBy": { "type": "array", "description": "Bounded list of driver UIDs who declined this pending request." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp." }
+      },
+      "required": [
+        "passengerId",
+        "passengerName",
+        "pickupVillage",
+        "destination",
+        "status",
+        "driverId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DriverAppVersion": {
+      "title": "DriverAppVersion",
+      "description": "In-app auto-update configuration document stored at app_settings/driver_app_version.",
+      "type": "object",
+      "properties": {
+        "latestVersionCode": { "type": "integer", "description": "Latest published Android versionCode." },
+        "latestVersionName": { "type": "string", "description": "Latest versionName label." },
+        "apkDownloadUrl": { "type": "string", "description": "HTTPS URL to download the latest APK." },
+        "forceUpdate": { "type": "boolean", "description": "Whether the update dialog is mandatory." },
+        "releaseNotes": { "type": "string", "description": "Optional summary of changes." }
+      },
+      "required": ["latestVersionCode", "apkDownloadUrl", "forceUpdate"]
+    }
+  },
+  "firestore": {
+    "/toto_drivers/{driverId}": {
+      "schema": { "$ref": "#/entities/TotoDriver" },
+      "description": "Driver profile documents keyed by authenticated user UID."
+    },
+    "/toto_rides/{rideId}": {
+      "schema": { "$ref": "#/entities/TotoRide" },
+      "description": "Live ride requests and driver ride history."
+    },
+    "/app_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/DriverAppVersion" },
+      "description": "Application configuration documents including driver_app_version."
+    }
+  }
+}
