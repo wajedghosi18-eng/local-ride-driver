@@ -1,0 +1,68 @@
+{
+  "project_info": {
+    "project_number": "153133574988",
+    "project_id": "local-deal-683e8",
+    "storage_bucket": "local-deal-683e8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:153133574988:android:062e6c8dded9dbd232bde9",
+        "android_client_info": {
+          "package_name": "com.aistudio.haatbazaar.mknvtr"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "153133574988-70ggm9jsrfqc676hlr05v9m661ddb70q.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCeSCpLq9z3BWrx6rocUavkKi-9jULJTAQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "153133574988-70ggm9jsrfqc676hlr05v9m661ddb70q.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:153133574988:android:ba957e6b4e31ecc632bde9",
+        "android_client_info": {
+          "package_name": "com.localdeal.driver"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "153133574988-70ggm9jsrfqc676hlr05v9m661ddb70q.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCeSCpLq9z3BWrx6rocUavkKi-9jULJTAQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "153133574988-70ggm9jsrfqc676hlr05v9m661ddb70q.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
