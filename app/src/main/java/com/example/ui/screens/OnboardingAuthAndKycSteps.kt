@@ -82,7 +82,7 @@ fun GoogleSignInStep(
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
-  val credentialManager = remember(context) { CredentialManager.create(context) }
+  val credentialManager = remember(context) { GoogleAuthHelper.safeCredentialManager(context) }
   var isLoading by remember { mutableStateOf(false) }
 
   Column(

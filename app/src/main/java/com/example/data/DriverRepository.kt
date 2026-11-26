@@ -6,6 +6,7 @@ import com.example.model.DriverAppVersion
 import com.example.model.TotoDriver
 import com.example.model.TotoRide
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -22,25 +23,28 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 
 class DriverRepository(
-  private val db: FirebaseFirestore,
-  private val auth: FirebaseAuth = Firebase.auth,
+  private val db: FirebaseFirestore?,
+  private val auth: FirebaseAuth? = runCatching { Firebase.auth }.getOrNull(),
 ) {
   constructor(context: Context) : this(
-    FirebaseFirestore.getInstance(
-      context.applicationContext.getString(R.string.firestore_database_id)
-    )
+    db = safeFirestore(context),
+    auth = safeAuth(context),
   )
 
+  private fun requireDb(): FirebaseFirestore =
+    db ?: throw IllegalStateException("Firebase Firestore is not initialized.")
+
   private fun requireUserId(): String =
-    auth.currentUser?.uid
+    auth?.currentUser?.uid
       ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
 
   suspend fun getDriverProfile(uid: String): Result<TotoDriver?> {
     val path = "$COLLECTION_DRIVERS/$uid"
     return try {
+      val firestore = requireDb()
       val currentUid = requireUserId()
       check(currentUid == uid) { "Signed-in user changed; refusing cross-user read." }
-      val snap = db.collection(COLLECTION_DRIVERS).document(uid).get().await()
+      val snap = firestore.collection(COLLECTION_DRIVERS).document(uid).get().await()
       if (!snap.exists()) {
         Result.success(null)
       } else {
@@ -57,11 +61,12 @@ class DriverRepository(
   }
 
   fun observeDriverProfile(uid: String): Flow<TotoDriver?> = flow {
+    val firestore = requireDb()
     val currentUid = requireUserId()
     check(currentUid == uid) { "Signed-in user changed; refusing cross-user stream." }
     val path = "$COLLECTION_DRIVERS/$uid"
     emitAll(
-      db.collection(COLLECTION_DRIVERS)
+      firestore.collection(COLLECTION_DRIVERS)
         .document(uid)
         .snapshots()
         .map { snap ->
@@ -77,7 +82,7 @@ class DriverRepository(
             .firstOrNull()
           if (firestoreError == null && error is CancellationException) throw error
           val exceptionToLog = firestoreError ?: (error as? Exception)
-          if (exceptionToLog != null && auth.currentUser?.uid == uid) {
+          if (exceptionToLog != null && auth?.currentUser?.uid == uid) {
             handleFirestoreError(exceptionToLog, OperationType.GET, path)
           }
           throw error
@@ -88,6 +93,7 @@ class DriverRepository(
   suspend fun saveDriverProfile(driver: TotoDriver): Result<Unit> {
     var path = COLLECTION_DRIVERS
     return try {
+      val firestore = requireDb()
       val uid = requireUserId()
       path = "$COLLECTION_DRIVERS/$uid"
       require(driver.fullName.trim().length in 2..100) { "Full name must be 2..100 chars" }
@@ -104,7 +110,7 @@ class DriverRepository(
         emergencyContact = driver.emergencyContact.trim(),
       ).toCreateMap(uid)
 
-      db.collection(COLLECTION_DRIVERS).document(uid).set(payload).await()
+      firestore.collection(COLLECTION_DRIVERS).document(uid).set(payload).await()
       Result.success(Unit)
     } catch (e: CancellationException) {
       throw e
@@ -122,9 +128,10 @@ class DriverRepository(
   ): Result<Unit> {
     val path = "$COLLECTION_DRIVERS/$uid"
     return try {
+      val firestore = requireDb()
       val currentUid = requireUserId()
       check(currentUid == uid) { "Signed-in user changed; refusing cross-user write." }
-      db.collection(COLLECTION_DRIVERS)
+      firestore.collection(COLLECTION_DRIVERS)
         .document(uid)
         .update(
           mapOf(
@@ -150,12 +157,13 @@ class DriverRepository(
   ): Result<Unit> {
     val path = "$COLLECTION_DRIVERS/$uid"
     return try {
+      val firestore = requireDb()
       val currentUid = requireUserId()
       check(currentUid == uid) { "Signed-in user changed; refusing cross-user write." }
       val payload = updates.toMutableMap().apply {
         put("updatedAt", FieldValue.serverTimestamp())
       }
-      db.collection(COLLECTION_DRIVERS).document(uid).update(payload).await()
+      firestore.collection(COLLECTION_DRIVERS).document(uid).update(payload).await()
       Result.success(Unit)
     } catch (e: CancellationException) {
       throw e
@@ -168,9 +176,10 @@ class DriverRepository(
   suspend fun deleteDriverProfile(uid: String): Result<Unit> {
     val path = "$COLLECTION_DRIVERS/$uid"
     return try {
+      val firestore = requireDb()
       val currentUid = requireUserId()
       check(currentUid == uid) { "Signed-in user changed; refusing cross-user delete." }
-      db.collection(COLLECTION_DRIVERS).document(uid).delete().await()
+      firestore.collection(COLLECTION_DRIVERS).document(uid).delete().await()
       Result.success(Unit)
     } catch (e: CancellationException) {
       throw e
@@ -181,10 +190,11 @@ class DriverRepository(
   }
 
   fun observePendingRides(uid: String): Flow<List<TotoRide>> = flow {
+    val firestore = requireDb()
     val currentUid = requireUserId()
     check(currentUid == uid) { "Signed-in user changed; refusing ride query." }
     emitAll(
-      db.collection(COLLECTION_RIDES)
+      firestore.collection(COLLECTION_RIDES)
         .whereEqualTo("status", "pending")
         .snapshots()
         .map { snapshot ->
@@ -198,7 +208,7 @@ class DriverRepository(
             .firstOrNull()
           if (firestoreError == null && error is CancellationException) throw error
           val exceptionToLog = firestoreError ?: (error as? Exception)
-          if (exceptionToLog != null && auth.currentUser?.uid == uid) {
+          if (exceptionToLog != null && auth?.currentUser?.uid == uid) {
             handleFirestoreError(exceptionToLog, OperationType.LIST, COLLECTION_RIDES)
           }
           throw error
@@ -207,10 +217,11 @@ class DriverRepository(
   }
 
   fun observeMyRides(uid: String): Flow<List<TotoRide>> = flow {
+    val firestore = requireDb()
     val currentUid = requireUserId()
     check(currentUid == uid) { "Signed-in user changed; refusing my rides query." }
     emitAll(
-      db.collection(COLLECTION_RIDES)
+      firestore.collection(COLLECTION_RIDES)
         .whereEqualTo("driverId", uid)
         .snapshots()
         .map { snapshot ->
@@ -223,7 +234,7 @@ class DriverRepository(
             .firstOrNull()
           if (firestoreError == null && error is CancellationException) throw error
           val exceptionToLog = firestoreError ?: (error as? Exception)
-          if (exceptionToLog != null && auth.currentUser?.uid == uid) {
+          if (exceptionToLog != null && auth?.currentUser?.uid == uid) {
             handleFirestoreError(exceptionToLog, OperationType.LIST, COLLECTION_RIDES)
           }
           throw error
@@ -234,9 +245,10 @@ class DriverRepository(
   suspend fun acceptRide(rideId: String, driverName: String): Result<Unit> {
     val path = "$COLLECTION_RIDES/$rideId"
     return try {
+      val firestore = requireDb()
       val uid = requireUserId()
       require(rideId.isNotBlank()) { "Ride ID must not be blank" }
-      db.collection(COLLECTION_RIDES).document(rideId).update(
+      firestore.collection(COLLECTION_RIDES).document(rideId).update(
         mapOf(
           "status" to "accepted",
           "driverId" to uid,
@@ -256,9 +268,10 @@ class DriverRepository(
   suspend fun rejectRide(rideId: String): Result<Unit> {
     val path = "$COLLECTION_RIDES/$rideId"
     return try {
+      val firestore = requireDb()
       val uid = requireUserId()
       require(rideId.isNotBlank()) { "Ride ID must not be blank" }
-      db.collection(COLLECTION_RIDES).document(rideId).update(
+      firestore.collection(COLLECTION_RIDES).document(rideId).update(
         mapOf(
           "rejectedBy" to FieldValue.arrayUnion(uid),
           "updatedAt" to FieldValue.serverTimestamp(),
@@ -276,10 +289,11 @@ class DriverRepository(
   suspend fun updateRideStatus(rideId: String, newStatus: String): Result<Unit> {
     val path = "$COLLECTION_RIDES/$rideId"
     return try {
+      val firestore = requireDb()
       requireUserId()
       require(rideId.isNotBlank()) { "Ride ID must not be blank" }
       require(newStatus == "completed" || newStatus == "cancelled") { "Invalid target status" }
-      db.collection(COLLECTION_RIDES).document(rideId).update(
+      firestore.collection(COLLECTION_RIDES).document(rideId).update(
         mapOf(
           "status" to newStatus,
           "updatedAt" to FieldValue.serverTimestamp(),
@@ -297,8 +311,9 @@ class DriverRepository(
   suspend fun fetchLatestAppVersion(): Result<DriverAppVersion?> {
     val path = "$COLLECTION_APP_SETTINGS/$DOC_DRIVER_APP_VERSION"
     return try {
+      val firestore = requireDb()
       requireUserId()
-      val snap = db.collection(COLLECTION_APP_SETTINGS).document(DOC_DRIVER_APP_VERSION).get().await()
+      val snap = firestore.collection(COLLECTION_APP_SETTINGS).document(DOC_DRIVER_APP_VERSION).get().await()
       if (!snap.exists()) {
         Result.success(null)
       } else {
@@ -325,5 +340,53 @@ class DriverRepository(
     const val COLLECTION_RIDES = "toto_rides"
     const val COLLECTION_APP_SETTINGS = "app_settings"
     const val DOC_DRIVER_APP_VERSION = "driver_app_version"
+
+    private fun ensureFirebase(context: Context): Boolean {
+      return try {
+        val appCtx = context.applicationContext
+        if (FirebaseApp.getApps(appCtx).isEmpty()) {
+          FirebaseApp.initializeApp(appCtx) != null
+        } else {
+          true
+        }
+      } catch (e: Exception) {
+        e.printStackTrace()
+        false
+      }
+    }
+
+    fun safeAuth(context: Context): FirebaseAuth? {
+      return try {
+        if (!ensureFirebase(context)) return null
+        Firebase.auth
+      } catch (e: Exception) {
+        e.printStackTrace()
+        null
+      }
+    }
+
+    fun safeFirestore(context: Context): FirebaseFirestore? {
+      return try {
+        val appCtx = context.applicationContext
+        if (!ensureFirebase(appCtx)) return null
+        val dbId = runCatching { appCtx.getString(R.string.firestore_database_id).trim() }.getOrNull()
+        if (!dbId.isNullOrBlank()) {
+          try {
+            FirebaseFirestore.getInstance(dbId)
+          } catch (e: Exception) {
+            e.printStackTrace()
+            FirebaseFirestore.getInstance()
+          }
+        } else {
+          FirebaseFirestore.getInstance()
+        }
+      } catch (e: Exception) {
+        e.printStackTrace()
+        null
+      }
+    }
+
+    fun createSafe(context: Context): DriverRepository =
+      DriverRepository(db = safeFirestore(context), auth = safeAuth(context))
   }
 }

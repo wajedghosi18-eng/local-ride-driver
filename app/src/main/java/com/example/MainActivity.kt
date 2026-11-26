@@ -3,6 +3,8 @@ package com.example
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Looper
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -47,7 +49,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import androidx.credentials.CredentialManager
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -66,19 +67,47 @@ import com.example.ui.screens.ProfileTab
 import com.example.ui.theme.LocalRideDriverTheme
 import com.example.viewmodel.DriverMainViewModel
 import com.example.viewmodel.OnboardingViewModel
-import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.auth
-import com.google.firebase.firestore.FirebaseFirestore
 
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
+    installGlobalExceptionHandler()
     super.onCreate(savedInstanceState)
-    enableEdgeToEdge()
+
+    try {
+      if (FirebaseApp.getApps(this).isEmpty()) {
+        FirebaseApp.initializeApp(this)
+      }
+    } catch (e: Exception) {
+      e.printStackTrace()
+    }
+
+    try {
+      enableEdgeToEdge()
+    } catch (e: Exception) {
+      e.printStackTrace()
+    }
+
     setContent {
       LocalRideDriverTheme {
         LocalRideDriverApp()
       }
+    }
+  }
+
+  private fun installGlobalExceptionHandler() {
+    val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+      try {
+        Log.e("LocalRideDriver", "Uncaught exception on thread ${thread.name}", throwable)
+        throwable.printStackTrace()
+      } catch (_: Throwable) {
+      }
+      if (thread.id != Looper.getMainLooper().thread.id) {
+        return@setDefaultUncaughtExceptionHandler
+      }
+      previousHandler?.uncaughtException(thread, throwable)
     }
   }
 }
@@ -87,42 +116,49 @@ class MainActivity : ComponentActivity() {
 fun LocalRideDriverApp() {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
-  val credentialManager = remember(context) { CredentialManager.create(context) }
+  val credentialManager = remember(context) { GoogleAuthHelper.safeCredentialManager(context) }
   val prefs = remember(context) { DriverPrefs(context) }
-  var currentUser by remember { mutableStateOf(Firebase.auth.currentUser) }
-  var isBootChecking by remember { mutableStateOf(true) }
+  val firebaseAuth = remember(context) { GoogleAuthHelper.safeAuth(context) }
+  var currentUser by remember { mutableStateOf(GoogleAuthHelper.safeCurrentUser(context)) }
   var forceOnboarding by remember { mutableStateOf(false) }
 
-  DisposableEffect(Unit) {
+  DisposableEffect(firebaseAuth) {
     val listener = FirebaseAuth.AuthStateListener { auth ->
-      currentUser = auth.currentUser
-    }
-    Firebase.auth.addAuthStateListener(listener)
-    onDispose { Firebase.auth.removeAuthStateListener(listener) }
-  }
-
-  LaunchedEffect(Unit) {
-    GoogleAuthHelper.attemptAutoSignIn(
-      context = context,
-      credentialManager = credentialManager,
-      scope = scope,
-      onAuthSuccess = {
-        currentUser = Firebase.auth.currentUser
-        isBootChecking = false
-      },
-      onUnauthenticated = {
-        isBootChecking = false
-      },
-    )
-  }
-
-  if (isBootChecking) {
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-      Box(contentAlignment = Alignment.Center) {
-        CircularProgressIndicator()
+      currentUser = try {
+        auth.currentUser
+      } catch (e: Exception) {
+        e.printStackTrace()
+        null
       }
     }
-    return
+    try {
+      firebaseAuth?.addAuthStateListener(listener)
+    } catch (e: Exception) {
+      e.printStackTrace()
+    }
+    onDispose {
+      try {
+        firebaseAuth?.removeAuthStateListener(listener)
+      } catch (e: Exception) {
+        e.printStackTrace()
+      }
+    }
+  }
+
+  // Non-blocking background silent sign-in only if onboarding was already completed;
+  // first-time launch renders Step 1 (Language Selection) immediately with zero blocking.
+  LaunchedEffect(Unit) {
+    if (currentUser == null && prefs.isOnboardingComplete()) {
+      GoogleAuthHelper.attemptAutoSignIn(
+        context = context,
+        credentialManager = credentialManager,
+        scope = scope,
+        onAuthSuccess = {
+          currentUser = GoogleAuthHelper.safeCurrentUser(context)
+        },
+        onUnauthenticated = {},
+      )
+    }
   }
 
   val user = currentUser
@@ -132,9 +168,8 @@ fun LocalRideDriverApp() {
       factory = viewModelFactory {
         initializer {
           val app = checkNotNull(this[APPLICATION_KEY])
-          val dbId = app.getString(R.string.firestore_database_id)
           OnboardingViewModel(
-            repository = DriverRepository(FirebaseFirestore.getInstance(dbId)),
+            repository = DriverRepository.createSafe(app),
             prefs = DriverPrefs(app),
           )
         }
@@ -146,7 +181,7 @@ fun LocalRideDriverApp() {
       state = onboardingState,
       onCompleted = {
         forceOnboarding = false
-        currentUser = Firebase.auth.currentUser
+        currentUser = GoogleAuthHelper.safeCurrentUser(context)
       },
     )
   } else {
@@ -173,16 +208,15 @@ private fun AuthenticatedDriverRoot(
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
-  val credentialManager = remember(context) { CredentialManager.create(context) }
+  val credentialManager = remember(context) { GoogleAuthHelper.safeCredentialManager(context) }
 
   val viewModel: DriverMainViewModel = viewModel(
     key = currentUserId,
     factory = viewModelFactory {
       initializer {
         val app = checkNotNull(this[APPLICATION_KEY])
-        val dbId = app.getString(R.string.firestore_database_id)
         DriverMainViewModel(
-          repository = DriverRepository(FirebaseFirestore.getInstance(dbId)),
+          repository = DriverRepository.createSafe(app),
           prefs = DriverPrefs(app),
           currentUserId = currentUserId,
         )
@@ -372,13 +406,13 @@ private fun AuthenticatedDriverRoot(
                       viewModel.saveEditedProfile(updates, onDone)
                     },
                     onSignOut = {
-                      GoogleAuthHelper.signOut(credentialManager, scope) {
+                      GoogleAuthHelper.signOut(credentialManager, scope, context = context) {
                         onSignedOut()
                       }
                     },
                     onDeleteProfile = {
                       viewModel.deleteProfile {
-                        GoogleAuthHelper.signOut(credentialManager, scope) {
+                        GoogleAuthHelper.signOut(credentialManager, scope, context = context) {
                           onSignedOut()
                         }
                       }

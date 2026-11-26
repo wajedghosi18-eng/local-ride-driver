@@ -10,6 +10,7 @@ import com.example.model.TotoColorOption
 import com.example.model.TotoDriver
 import com.example.model.VehicleType
 import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,12 +45,22 @@ class OnboardingViewModel(
   private val prefs: DriverPrefs,
 ) : ViewModel() {
 
+  private fun safeCurrentUser(): FirebaseUser? = try {
+    Firebase.auth.currentUser
+  } catch (e: Exception) {
+    e.printStackTrace()
+    null
+  }
+
   private val _state = MutableStateFlow(
-    OnboardingUiState(
-      language = prefs.getLanguage(),
-      currentStep = if (Firebase.auth.currentUser != null) 6 else 1,
-      fullName = Firebase.auth.currentUser?.displayName.orEmpty(),
-    )
+    run {
+      val existingUser = safeCurrentUser()
+      OnboardingUiState(
+        language = prefs.getLanguage(),
+        currentStep = if (existingUser != null) 6 else 1,
+        fullName = existingUser?.displayName.orEmpty(),
+      )
+    }
   )
   val state: StateFlow<OnboardingUiState> = _state.asStateFlow()
 
@@ -141,7 +152,7 @@ class OnboardingViewModel(
   }
 
   fun onGoogleSignedIn(onExistingProfileFound: () -> Unit) {
-    val user = Firebase.auth.currentUser ?: return
+    val user = safeCurrentUser() ?: return
     _state.update {
       it.copy(
         isCheckingExistingProfile = true,
@@ -178,7 +189,7 @@ class OnboardingViewModel(
   }
 
   fun completeRegistration(onCompleted: () -> Unit) {
-    val user = Firebase.auth.currentUser
+    val user = safeCurrentUser()
     if (user == null) {
       _state.update { it.copy(currentStep = 5, errorMessage = "Please sign in with Google first.") }
       return
