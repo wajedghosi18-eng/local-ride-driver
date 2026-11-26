@@ -1,6 +1,5 @@
 package com.example.auth
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.util.Log
@@ -33,10 +32,10 @@ object GoogleAuthHelper {
   fun ensureFirebaseInitialized(context: Context): Boolean {
     return try {
       val appContext = context.applicationContext
-      if (FirebaseApp.getApps(appContext).isEmpty()) {
-        FirebaseApp.initializeApp(appContext) != null
-      } else {
+      if (FirebaseApp.getApps(appContext).isNotEmpty()) {
         true
+      } else {
+        FirebaseApp.initializeApp(appContext) != null || FirebaseApp.getApps(appContext).isNotEmpty()
       }
     } catch (e: Exception) {
       e.printStackTrace()
@@ -46,8 +45,12 @@ object GoogleAuthHelper {
 
   fun safeAuth(context: Context): FirebaseAuth? {
     return try {
-      if (!ensureFirebaseInitialized(context)) return null
-      Firebase.auth
+      val appContext = context.applicationContext
+      if (FirebaseApp.getApps(appContext).isNotEmpty() || ensureFirebaseInitialized(appContext)) {
+        FirebaseAuth.getInstance()
+      } else {
+        null
+      }
     } catch (e: Exception) {
       e.printStackTrace()
       null
@@ -79,17 +82,9 @@ object GoogleAuthHelper {
       trimmed.endsWith(".apps.googleusercontent.com")
   }
 
-  @SuppressLint("DiscouragedApi")
   fun resolveDefaultWebClientId(context: Context): String? {
     return try {
-      val appContext = context.applicationContext
-      val resId = appContext.resources.getIdentifier(
-        "default_web_client_id",
-        "string",
-        appContext.packageName,
-      )
-      if (resId == 0) return null
-      val value = appContext.getString(resId).trim()
+      val value = context.getString(R.string.default_web_client_id).trim()
       value.takeIf { isValidWebClientId(it) }
     } catch (e: Exception) {
       e.printStackTrace()
@@ -138,13 +133,9 @@ object GoogleAuthHelper {
         val cred = cm.getCredential(context, request).credential
         if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
           val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-          val firebaseAuth = safeAuth(context)
-          if (firebaseAuth != null) {
-            firebaseAuth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
-            onAuthSuccess()
-          } else {
-            onUnauthenticated()
-          }
+          val firebaseAuth = safeAuth(context) ?: Firebase.auth
+          firebaseAuth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+          onAuthSuccess()
         } else {
           onUnauthenticated()
         }
@@ -165,10 +156,7 @@ object GoogleAuthHelper {
     onAuthError: (String) -> Unit,
     onAuthCancelled: () -> Unit,
   ) {
-    val auth = safeAuth(context) ?: run {
-      onAuthError("Firebase is not configured yet. Please check google-services.json.")
-      return
-    }
+    ensureFirebaseInitialized(context)
     val clientId = resolveDefaultWebClientId(context) ?: run {
       onAuthError("Google Sign-In configuration missing or invalid Web Client ID.")
       return
@@ -198,6 +186,10 @@ object GoogleAuthHelper {
         val cred = cm.getCredential(activity, request).credential
         if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
           val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
+          val auth = safeAuth(context) ?: run {
+            onAuthError("FirebaseAuth is unavailable. Ensure google-services.json matches com.localdeal.driver.")
+            return@launch
+          }
           auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
           onAuthSuccess()
         } else {
