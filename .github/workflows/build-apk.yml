@@ -51,6 +51,19 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug --no-daemon --no-configuration-cache --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
 
+      - name: Print Debug Keystore SHA-1 Fingerprint
+        run: |
+          if [ -f ~/.android/debug.keystore ]; then
+            echo "=== ~/.android/debug.keystore ==="
+            keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep SHA1 || true
+          else
+            echo "~/.android/debug.keystore not found on runner."
+          fi
+          if [ -f debug.keystore ]; then
+            echo "=== Project debug.keystore (signs app-debug.apk) ==="
+            keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | grep SHA1 || true
+          fi
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

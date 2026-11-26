@@ -3,11 +3,13 @@ package com.example.auth
 import android.app.Activity
 import android.content.Context
 import android.util.Log
+import android.widget.Toast
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
 import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
@@ -21,6 +23,7 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -148,6 +151,24 @@ object GoogleAuthHelper {
     }
   }
 
+  private suspend fun showErrorToast(context: Context, message: String) {
+    withContext(Dispatchers.Main) {
+      try {
+        Toast.makeText(context.applicationContext, message, Toast.LENGTH_LONG).show()
+      } catch (e: Exception) {
+        Log.w(TAG, "Unable to show Toast: ${e.message}")
+      }
+    }
+  }
+
+  private fun showErrorToastSync(context: Context, message: String) {
+    try {
+      Toast.makeText(context.applicationContext, message, Toast.LENGTH_LONG).show()
+    } catch (e: Exception) {
+      Log.w(TAG, "Unable to show Toast: ${e.message}")
+    }
+  }
+
   fun onGoogleSignInClicked(
     context: Context,
     credentialManager: CredentialManager?,
@@ -158,15 +179,21 @@ object GoogleAuthHelper {
   ) {
     ensureFirebaseInitialized(context)
     val clientId = resolveDefaultWebClientId(context) ?: run {
-      onAuthError("Google Sign-In configuration missing or invalid Web Client ID.")
+      val msg = "Google Sign-In configuration missing or invalid Web Client ID."
+      showErrorToastSync(context, msg)
+      onAuthError(msg)
       return
     }
     val activity = context as? Activity ?: run {
-      onAuthError("Unable to launch Google Sign-In without an Activity context")
+      val msg = "Unable to launch Google Sign-In without an Activity context."
+      showErrorToastSync(context, msg)
+      onAuthError(msg)
       return
     }
     val cm = credentialManager ?: safeCredentialManager(context) ?: run {
-      onAuthError("Google Credential Manager is unavailable on this device.")
+      val msg = "Google Credential Manager is unavailable on this device."
+      showErrorToastSync(context, msg)
+      onAuthError(msg)
       return
     }
 
@@ -177,7 +204,9 @@ object GoogleAuthHelper {
         .build()
     } catch (e: Exception) {
       e.printStackTrace()
-      onAuthError(e.localizedMessage ?: "Invalid Google Sign-In configuration")
+      val msg = "Google Sign-In setup failed: ${e.javaClass.simpleName}: ${e.localizedMessage ?: e.message ?: "Invalid configuration"}"
+      showErrorToastSync(context, msg)
+      onAuthError(msg)
       return
     }
 
@@ -187,23 +216,35 @@ object GoogleAuthHelper {
         if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
           val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
           val auth = safeAuth(context) ?: run {
-            onAuthError("FirebaseAuth is unavailable. Ensure google-services.json matches com.localdeal.driver.")
+            val msg = "FirebaseAuth is unavailable. Ensure google-services.json matches com.localdeal.driver."
+            showErrorToast(context, msg)
+            onAuthError(msg)
             return@launch
           }
           auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
           onAuthSuccess()
         } else {
-          onAuthError("Unexpected credential type")
+          val msg = "Google Sign-In failed: Unexpected credential type (${cred.type})"
+          showErrorToast(context, msg)
+          onAuthError(msg)
         }
       } catch (e: CancellationException) {
         throw e
       } catch (e: GetCredentialCancellationException) {
         Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
         onAuthCancelled()
+      } catch (e: GetCredentialException) {
+        e.printStackTrace()
+        Log.e(TAG, "Google Sign-In credential error (${e.type})", e)
+        val msg = "Google Sign-In failed (${e.javaClass.simpleName}): ${e.localizedMessage ?: e.message ?: e.type}"
+        showErrorToast(context, msg)
+        onAuthError(msg)
       } catch (e: Exception) {
         e.printStackTrace()
         Log.e(TAG, "Google Sign-In failed", e)
-        onAuthError(e.localizedMessage ?: "Google Sign-In failed")
+        val msg = "Google Sign-In failed (${e.javaClass.simpleName}): ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+        showErrorToast(context, msg)
+        onAuthError(msg)
       }
     }
   }
