@@ -28,8 +28,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.ElectricRickshaw
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.LocalTaxi
@@ -367,7 +367,7 @@ private fun VehicleSelectionStep(
     )
 
     VehicleOptionCard(
-      icon = Icons.Filled.DirectionsBike,
+      icon = Icons.AutoMirrored.Filled.DirectionsBike,
       title = strings.vehicleBikeTitle,
       description = strings.vehicleBikeDesc,
       badge = null,
