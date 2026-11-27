@@ -421,7 +421,7 @@ class DriverRepository(
       return try {
         val appCtx = context.applicationContext
         if (!ensureFirebase(appCtx)) {
-          lastInitError = "FirebaseApp failed to initialize"
+          lastInitError = GoogleAuthHelper.lastInitError ?: "FirebaseApp failed to initialize"
           return null
         }
         val firebaseApp = FirebaseApp.getApps(appCtx).firstOrNull()

@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -30,6 +32,8 @@ import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.MarkEmailRead
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
@@ -40,8 +44,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,16 +56,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import android.app.Activity
-import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.example.R
 import com.example.auth.GoogleAuthHelper
@@ -82,25 +97,56 @@ fun GoogleSignInStep(
   onError: (String?) -> Unit,
 ) {
   val context = LocalContext.current
-  var isLaunchingPicker by remember { mutableStateOf(false) }
-  var manualGmail by remember { mutableStateOf("") }
+  val scope = rememberCoroutineScope()
 
-  val accountPickerLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.StartActivityForResult()
-  ) { activityResult ->
-    isLaunchingPicker = false
-    GoogleAuthHelper.handleAccountPickerResult(
-      context = context,
-      resultCode = activityResult.resultCode,
-      data = activityResult.data,
-      onSuccess = { accountResult ->
+  var driverEmail by remember { mutableStateOf("") }
+  var activeOtp by remember { mutableStateOf<String?>(null) }
+  var otpDigits by remember { mutableStateOf(List(4) { "" }) }
+  var isSendingOtp by remember { mutableStateOf(false) }
+  var focusedBoxIndex by remember { mutableStateOf(-1) }
+  val focusRequesters = remember { List(4) { FocusRequester() } }
+
+  fun triggerSendOtp(emailToSend: String) {
+    val cleanEmail = emailToSend.trim()
+    if (!GoogleAuthHelper.isValidEmail(cleanEmail)) {
+      onError(strings.invalidEmailError)
+      return
+    }
+    driverEmail = cleanEmail
+    isSendingOtp = true
+    onError(null)
+    val newOtp = GoogleAuthHelper.generateFourDigitOtp()
+    scope.launch {
+      val res = GoogleAuthHelper.sendEmailOtp(cleanEmail, newOtp)
+      isSendingOtp = false
+      res.onSuccess {
+        activeOtp = newOtp
+        otpDigits = List(4) { "" }
         onError(null)
-        onSignedIn(accountResult)
-      },
-      onNoAccountSelected = { msg ->
+      }.onFailure { err ->
+        val msg = "${strings.otpSendFailedError} (${err.localizedMessage ?: err.message ?: "Error"})"
+        Toast.makeText(context.applicationContext, msg, Toast.LENGTH_LONG).show()
         onError(msg)
-      },
-    )
+      }
+    }
+  }
+
+  fun verifyOtp(digits: List<String>) {
+    val entered = digits.joinToString("")
+    val expected = activeOtp ?: return
+    if (entered.length < 4) return
+    if (entered == expected) {
+      onError(null)
+      onSignedIn(GoogleAuthHelper.buildResultForEmail(context, driverEmail))
+    } else {
+      onError(strings.invalidOtpError)
+    }
+  }
+
+  LaunchedEffect(activeOtp != null) {
+    if (activeOtp != null) {
+      runCatching { focusRequesters[0].requestFocus() }
+    }
   }
 
   Column(
@@ -115,108 +161,253 @@ fun GoogleSignInStep(
       contentScale = ContentScale.Crop,
       modifier = Modifier
         .fillMaxWidth()
-        .height(175.dp)
+        .height(168.dp)
         .clip(RoundedCornerShape(22.dp)),
     )
 
-    Text(text = strings.googleSignInTitle, style = MaterialTheme.typography.headlineMedium)
-    Text(
-      text = strings.googleSignInSubtitle,
-      style = MaterialTheme.typography.bodyLarge,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    if (activeOtp == null) {
+      Text(text = strings.googleSignInTitle, style = MaterialTheme.typography.headlineMedium)
+      Text(
+        text = strings.googleSignInSubtitle,
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
 
-    Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-      modifier = Modifier.fillMaxWidth(),
-    ) {
-      Row(
-        modifier = Modifier.padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+      Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+        modifier = Modifier.fillMaxWidth(),
       ) {
-        Icon(
-          imageVector = Icons.Filled.VerifiedUser,
-          contentDescription = null,
-          tint = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-          text = strings.noOtpNeededNote,
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onPrimaryContainer,
-        )
-      }
-    }
-
-    Button(
-      onClick = {
-        isLaunchingPicker = true
-        onError(null)
-        try {
-          accountPickerLauncher.launch(GoogleAuthHelper.buildAccountPickerIntent())
-        } catch (e: Exception) {
-          isLaunchingPicker = false
-          val msg = "Unable to open Google account picker: ${e.localizedMessage ?: e.message ?: "Unknown error"}"
-          Toast.makeText(context.applicationContext, msg, Toast.LENGTH_LONG).show()
-          onError(msg)
+        Row(
+          modifier = Modifier.padding(14.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Icon(
+            imageVector = Icons.Filled.VerifiedUser,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+          )
+          Spacer(Modifier.width(10.dp))
+          Text(
+            text = strings.noOtpNeededNote,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+          )
         }
-      },
-      enabled = !isLaunchingPicker && !isCheckingProfile,
-      modifier = Modifier
-        .fillMaxWidth()
-        .height(56.dp)
-        .testTag("google_sign_in_button"),
-      shape = RoundedCornerShape(16.dp),
-    ) {
-      if (isLaunchingPicker || isCheckingProfile) {
-        CircularProgressIndicator(
-          modifier = Modifier.size(22.dp),
-          color = MaterialTheme.colorScheme.onPrimary,
-          strokeWidth = 2.dp,
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(if (isCheckingProfile) strings.checkingProfile else strings.loading)
-      } else {
-        Text(strings.signInWithGoogle, style = MaterialTheme.typography.titleMedium)
       }
-    }
 
-    OutlinedTextField(
-      value = manualGmail,
-      onValueChange = {
-        manualGmail = it
-        onError(null)
-      },
-      label = { Text(strings.orEnterGmailLabel) },
-      placeholder = { Text(strings.gmailHint) },
-      keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-      singleLine = true,
-      shape = RoundedCornerShape(14.dp),
-      modifier = Modifier
-        .fillMaxWidth()
-        .testTag("manual_gmail_input"),
-    )
-
-    if (manualGmail.isNotBlank()) {
-      OutlinedButton(
-        onClick = {
-          val trimmed = manualGmail.trim()
-          if (!GoogleAuthHelper.isValidEmail(trimmed)) {
-            onError(strings.invalidEmailError)
-          } else {
-            onError(null)
-            onSignedIn(GoogleAuthHelper.buildResultForEmail(context, trimmed))
-          }
+      OutlinedTextField(
+        value = driverEmail,
+        onValueChange = {
+          driverEmail = it
+          onError(null)
         },
-        enabled = !isLaunchingPicker && !isCheckingProfile,
+        label = { Text(strings.gmailInputLabel) },
+        placeholder = { Text(strings.gmailHint) },
+        leadingIcon = { Icon(Icons.Filled.Email, contentDescription = null) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+        singleLine = true,
+        shape = RoundedCornerShape(14.dp),
         modifier = Modifier
           .fillMaxWidth()
-          .height(52.dp)
-          .testTag("manual_gmail_continue_button"),
-        shape = RoundedCornerShape(14.dp),
+          .testTag("gmail_address_input"),
+      )
+
+      Spacer(Modifier.weight(1f, fill = true))
+
+      Button(
+        onClick = { triggerSendOtp(driverEmail) },
+        enabled = !isSendingOtp && !isCheckingProfile,
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(56.dp)
+          .testTag("send_otp_button"),
+        shape = RoundedCornerShape(16.dp),
       ) {
-        Text(strings.continueWithEmailBtn, style = MaterialTheme.typography.titleMedium)
+        if (isSendingOtp || isCheckingProfile) {
+          CircularProgressIndicator(
+            modifier = Modifier.size(22.dp),
+            color = MaterialTheme.colorScheme.onPrimary,
+            strokeWidth = 2.dp,
+          )
+          Spacer(Modifier.width(10.dp))
+          Text(if (isCheckingProfile) strings.checkingProfile else strings.sendingCodeBtn)
+        } else {
+          Text(strings.sendFourDigitCodeBtn, style = MaterialTheme.typography.titleMedium)
+        }
+      }
+    } else {
+      Text(
+        text = "${strings.enterFourDigitCodePrefix} $driverEmail",
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+      )
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        for (i in 0 until 4) {
+          val digit = otpDigits[i]
+          val isFocused = focusedBoxIndex == i
+          Surface(
+            modifier = Modifier
+              .size(width = 62.dp, height = 66.dp)
+              .clickable { runCatching { focusRequesters[i].requestFocus() } },
+            shape = RoundedCornerShape(14.dp),
+            color = if (digit.isNotEmpty()) {
+              MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+            } else {
+              MaterialTheme.colorScheme.surface
+            },
+            border = BorderStroke(
+              width = if (isFocused || digit.isNotEmpty()) 2.dp else 1.5.dp,
+              color = if (isFocused || digit.isNotEmpty()) {
+                MaterialTheme.colorScheme.primary
+              } else {
+                MaterialTheme.colorScheme.outline
+              },
+            ),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              BasicTextField(
+                value = digit,
+                onValueChange = { incoming ->
+                  val digitsOnly = incoming.filter { it.isDigit() }
+                  if (digitsOnly.length > 1) {
+                    val filled = List(4) { idx -> digitsOnly.getOrNull(idx)?.toString() ?: "" }
+                    otpDigits = filled
+                    onError(null)
+                    val nextFocus = filled.indexOfFirst { it.isEmpty() }.let { if (it == -1) 3 else it }
+                    runCatching { focusRequesters[nextFocus].requestFocus() }
+                    if (filled.all { it.length == 1 }) {
+                      verifyOtp(filled)
+                    }
+                  } else {
+                    val updated = otpDigits.toMutableList()
+                    updated[i] = digitsOnly
+                    otpDigits = updated
+                    onError(null)
+                    if (digitsOnly.isNotEmpty() && i < 3) {
+                      runCatching { focusRequesters[i + 1].requestFocus() }
+                    }
+                    if (updated.all { it.length == 1 }) {
+                      verifyOtp(updated)
+                    }
+                  }
+                },
+                singleLine = true,
+                textStyle = TextStyle(
+                  color = MaterialTheme.colorScheme.onSurface,
+                  fontSize = MaterialTheme.typography.headlineMedium.fontSize,
+                  fontWeight = FontWeight.Bold,
+                  textAlign = TextAlign.Center,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .focusRequester(focusRequesters[i])
+                  .onFocusChanged { if (it.isFocused) focusedBoxIndex = i }
+                  .onPreviewKeyEvent { keyEvent ->
+                    if (keyEvent.type == KeyEventType.KeyDown &&
+                      keyEvent.key == Key.Backspace &&
+                      otpDigits[i].isEmpty() &&
+                      i > 0
+                    ) {
+                      val updated = otpDigits.toMutableList()
+                      updated[i - 1] = ""
+                      otpDigits = updated
+                      runCatching { focusRequesters[i - 1].requestFocus() }
+                      true
+                    } else {
+                      false
+                    }
+                  }
+                  .testTag("otp_box_$i"),
+              )
+            }
+          }
+        }
+      }
+
+      Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Row(
+          modifier = Modifier.padding(14.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Icon(
+            imageVector = Icons.Filled.MarkEmailRead,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.secondary,
+          )
+          Spacer(Modifier.width(10.dp))
+          Text(
+            text = strings.otpSpamTip,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+          )
+        }
+      }
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        OutlinedButton(
+          onClick = { triggerSendOtp(driverEmail) },
+          enabled = !isSendingOtp && !isCheckingProfile,
+          modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .testTag("resend_otp_button"),
+          shape = RoundedCornerShape(12.dp),
+        ) {
+          Text(if (isSendingOtp) strings.sendingCodeBtn else strings.resendCodeBtn)
+        }
+
+        TextButton(
+          onClick = {
+            activeOtp = null
+            otpDigits = List(4) { "" }
+            onError(null)
+          },
+          enabled = !isSendingOtp && !isCheckingProfile,
+          modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .testTag("change_email_button"),
+        ) {
+          Text(strings.changeEmailBtn)
+        }
+      }
+
+      Spacer(Modifier.weight(1f, fill = true))
+
+      Button(
+        onClick = { verifyOtp(otpDigits) },
+        enabled = !isSendingOtp && !isCheckingProfile && otpDigits.all { it.length == 1 },
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(56.dp)
+          .testTag("verify_otp_button"),
+        shape = RoundedCornerShape(16.dp),
+      ) {
+        if (isCheckingProfile) {
+          CircularProgressIndicator(
+            modifier = Modifier.size(22.dp),
+            color = MaterialTheme.colorScheme.onPrimary,
+            strokeWidth = 2.dp,
+          )
+          Spacer(Modifier.width(10.dp))
+          Text(strings.checkingProfile)
+        } else {
+          Text(strings.verifyCodeBtn, style = MaterialTheme.typography.titleMedium)
+        }
       }
     }
   }

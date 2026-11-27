@@ -1,24 +1,23 @@
 package com.example.auth
 
-import android.accounts.AccountManager
-import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.util.Log
 import android.util.Patterns
-import android.widget.Toast
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 data class GoogleSignInAccountResult(
   val uid: String,
@@ -34,6 +33,12 @@ object GoogleAuthHelper {
   private const val FALLBACK_APP_ID = "1:153133574988:android:ba957e6b4e51ecc632bde9"
   private const val FALLBACK_STORAGE_BUCKET = "local-deal-683e8.firebasestorage.app"
   private const val FALLBACK_GCM_SENDER_ID = "153133574988"
+  private const val OTP_SCRIPT_URL =
+    "https://script.google.com/macros/s/AKfycbx748m7-S5M8D8e-Sn5moxkr6RH0CsOU6MNj_6g2PV7B8QbTagqQf-2ELvvCVmF_dsUEw/exec"
+
+  @Volatile
+  var lastInitError: String? = null
+    private set
 
   private fun resolveStringResource(context: Context, name: String): String? {
     return try {
@@ -96,18 +101,22 @@ object GoogleAuthHelper {
     return try {
       val appContext = context.applicationContext
       if (FirebaseApp.getApps(appContext).isNotEmpty()) {
+        lastInitError = null
         return true
       }
 
       runCatching { FirebaseApp.initializeApp(appContext) }
       if (FirebaseApp.getApps(appContext).isNotEmpty()) {
+        lastInitError = null
         return true
       }
 
       val assetConfig = readConfigFromAssets(appContext)
       val apiKey = resolveStringResource(appContext, "google_api_key") ?: assetConfig?.apiKey
+
       if (apiKey.isNullOrBlank()) {
-        Log.e(TAG, "Firebase fallback missing google_api_key; check google-services.json")
+        lastInitError = "Missing Firebase API key in google-services.json / assets / Secrets"
+        Log.e(TAG, lastInitError!!)
         return false
       }
 
@@ -133,9 +142,12 @@ object GoogleAuthHelper {
         .build()
 
       FirebaseApp.initializeApp(appContext, options)
-      FirebaseApp.getApps(appContext).isNotEmpty()
+      val initialized = FirebaseApp.getApps(appContext).isNotEmpty()
+      lastInitError = if (initialized) null else "FirebaseApp.initializeApp(context, options) returned null"
+      initialized
     } catch (e: Exception) {
       e.printStackTrace()
+      lastInitError = "${e.javaClass.simpleName}: ${e.localizedMessage ?: e.message}"
       false
     }
   }
@@ -144,7 +156,8 @@ object GoogleAuthHelper {
     return try {
       val appContext = context.applicationContext
       if (FirebaseApp.getApps(appContext).isNotEmpty() || ensureFirebaseInitialized(appContext)) {
-        FirebaseAuth.getInstance()
+        val app = FirebaseApp.getApps(appContext).firstOrNull()
+        if (app != null) FirebaseAuth.getInstance(app) else FirebaseAuth.getInstance()
       } else {
         null
       }
@@ -163,16 +176,49 @@ object GoogleAuthHelper {
     }
   }
 
-  fun buildAccountPickerIntent(): Intent =
-    AccountManager.newChooseAccountIntent(
-      null,
-      null,
-      arrayOf("com.google"),
-      null,
-      null,
-      null,
-      null,
-    )
+  fun generateFourDigitOtp(): String = (1000..9999).random().toString()
+
+  suspend fun sendEmailOtp(email: String, otp: String): Result<Unit> = withContext(Dispatchers.IO) {
+    var connection: HttpURLConnection? = null
+    try {
+      val url = URL(OTP_SCRIPT_URL)
+      connection = (url.openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        instanceFollowRedirects = true
+        doOutput = true
+        connectTimeout = 15_000
+        readTimeout = 15_000
+        setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+        setRequestProperty("Accept", "application/json")
+      }
+      val payload = JSONObject()
+        .put("email", email.trim())
+        .put("otp", otp)
+        .toString()
+
+      connection.outputStream.use { os ->
+        os.write(payload.toByteArray(Charsets.UTF_8))
+        os.flush()
+      }
+
+      val responseCode = connection.responseCode
+      if (responseCode in 200..399) {
+        Result.success(Unit)
+      } else {
+        val errBody = runCatching {
+          connection.errorStream?.bufferedReader()?.use { it.readText() }
+        }.getOrNull().orEmpty()
+        Result.failure(IllegalStateException("HTTP $responseCode ${errBody.take(120)}".trim()))
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to send OTP email", e)
+      Result.failure(e)
+    } finally {
+      runCatching { connection?.disconnect() }
+    }
+  }
 
   fun isValidEmail(email: String): Boolean {
     val trimmed = email.trim()
@@ -196,36 +242,6 @@ object GoogleAuthHelper {
       photoUrl = "",
       isFirebaseAuthenticated = fbUser != null,
     )
-  }
-
-  fun handleAccountPickerResult(
-    context: Context,
-    resultCode: Int,
-    data: Intent?,
-    onSuccess: (GoogleSignInAccountResult) -> Unit,
-    onNoAccountSelected: (String) -> Unit,
-  ) {
-    if (resultCode != Activity.RESULT_OK) {
-      val msg = "No Google account selected. Pick a Gmail account or enter your Gmail address below."
-      onNoAccountSelected(msg)
-      return
-    }
-    val selectedEmail = data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)?.trim().orEmpty()
-    if (selectedEmail.isBlank()) {
-      val msg = "Could not read Gmail address from device. Please enter your Gmail address below."
-      showErrorToastSync(context, msg)
-      onNoAccountSelected(msg)
-      return
-    }
-    onSuccess(buildResultForEmail(context, selectedEmail))
-  }
-
-  private fun showErrorToastSync(context: Context, message: String) {
-    try {
-      Toast.makeText(context.applicationContext, message, Toast.LENGTH_LONG).show()
-    } catch (e: Exception) {
-      Log.w(TAG, "Unable to show Toast: ${e.message}")
-    }
   }
 
   fun signOut(
