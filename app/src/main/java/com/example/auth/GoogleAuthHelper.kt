@@ -9,6 +9,7 @@ import android.util.Patterns
 import android.widget.Toast
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
@@ -17,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 data class GoogleSignInAccountResult(
   val uid: String,
@@ -28,15 +30,76 @@ data class GoogleSignInAccountResult(
 
 object GoogleAuthHelper {
   private const val TAG = "Auth"
+  private const val FALLBACK_PROJECT_ID = "local-deal-683e8"
+  private const val FALLBACK_APP_ID = "1:153133574988:android:ba957e6b4e51ecc632bde9"
+  private const val FALLBACK_STORAGE_BUCKET = "local-deal-683e8.firebasestorage.app"
+  private const val FALLBACK_GCM_SENDER_ID = "153133574988"
+
+  private fun resolveStringResource(context: Context, name: String): String? {
+    return try {
+      val id = context.resources.getIdentifier(name, "string", context.packageName)
+      if (id != 0) context.getString(id).trim().takeIf { it.isNotEmpty() } else null
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private fun readApiKeyFromAssets(context: Context): String? {
+    return try {
+      val jsonText = context.assets.open("google-services.json").bufferedReader().use { it.readText() }
+      val root = JSONObject(jsonText)
+      val clients = root.optJSONArray("client") ?: return null
+      for (i in 0 until clients.length()) {
+        val client = clients.optJSONObject(i) ?: continue
+        val pkg = client.optJSONObject("client_info")
+          ?.optJSONObject("android_client_info")
+          ?.optString("package_name")
+        if (pkg == context.packageName || clients.length() == 1) {
+          val keys = client.optJSONArray("api_key")
+          val key = keys?.optJSONObject(0)?.optString("current_key")?.trim()
+          if (!key.isNullOrEmpty()) return key
+        }
+      }
+      null
+    } catch (_: Exception) {
+      null
+    }
+  }
 
   fun ensureFirebaseInitialized(context: Context): Boolean {
     return try {
       val appContext = context.applicationContext
       if (FirebaseApp.getApps(appContext).isNotEmpty()) {
-        true
-      } else {
-        FirebaseApp.initializeApp(appContext) != null || FirebaseApp.getApps(appContext).isNotEmpty()
+        return true
       }
+
+      runCatching { FirebaseApp.initializeApp(appContext) }
+      if (FirebaseApp.getApps(appContext).isNotEmpty()) {
+        return true
+      }
+
+      val apiKey = resolveStringResource(appContext, "google_api_key")
+        ?: readApiKeyFromAssets(appContext)
+      if (apiKey.isNullOrBlank()) {
+        Log.e(TAG, "Firebase fallback missing google_api_key; check app/google-services.json")
+        return false
+      }
+
+      val projectId = resolveStringResource(appContext, "project_id") ?: FALLBACK_PROJECT_ID
+      val applicationId = resolveStringResource(appContext, "google_app_id") ?: FALLBACK_APP_ID
+      val storageBucket = resolveStringResource(appContext, "google_storage_bucket") ?: FALLBACK_STORAGE_BUCKET
+      val gcmSenderId = resolveStringResource(appContext, "gcm_defaultSenderId") ?: FALLBACK_GCM_SENDER_ID
+
+      val options = FirebaseOptions.Builder()
+        .setProjectId(projectId)
+        .setApplicationId(applicationId)
+        .setStorageBucket(storageBucket)
+        .setGcmSenderId(gcmSenderId)
+        .setApiKey(apiKey)
+        .build()
+
+      FirebaseApp.initializeApp(appContext, options)
+      FirebaseApp.getApps(appContext).isNotEmpty()
     } catch (e: Exception) {
       e.printStackTrace()
       false

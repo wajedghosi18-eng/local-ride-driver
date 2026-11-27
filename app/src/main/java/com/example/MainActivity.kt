@@ -81,9 +81,7 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
 
     try {
-      if (FirebaseApp.getApps(this).isEmpty()) {
-        FirebaseApp.initializeApp(this)
-      }
+      GoogleAuthHelper.ensureFirebaseInitialized(this)
     } catch (e: Exception) {
       e.printStackTrace()
     }

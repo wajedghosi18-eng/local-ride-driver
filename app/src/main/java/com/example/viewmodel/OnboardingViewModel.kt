@@ -260,8 +260,8 @@ class OnboardingViewModel(
         passportPhotoBase64 = s.passportPhotoBase64,
         aadhaarFrontBase64 = s.aadhaarFrontBase64,
         aadhaarBackBase64 = s.aadhaarBackBase64,
-        status = "pending_or_active",
-        online = false,
+        status = "active",
+        online = true,
         lat = s.lat,
         lng = s.lng,
       )

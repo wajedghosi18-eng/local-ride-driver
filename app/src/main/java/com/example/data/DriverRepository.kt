@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import com.example.R
+import com.example.auth.GoogleAuthHelper
 import com.example.model.DriverAppVersion
 import com.example.model.TotoDriver
 import com.example.model.TotoRide
@@ -26,14 +27,18 @@ class DriverRepository(
   private val db: FirebaseFirestore?,
   private val auth: FirebaseAuth? = runCatching { Firebase.auth }.getOrNull(),
   private val fallbackUserId: String? = null,
+  private val appContext: Context? = null,
 ) {
   constructor(context: Context) : this(
     db = safeFirestore(context),
     auth = safeAuth(context),
+    appContext = context.applicationContext,
   )
 
   private fun requireDb(): FirebaseFirestore =
-    db ?: throw IllegalStateException("Firebase Firestore is not initialized.")
+    db
+      ?: appContext?.let { safeFirestore(it) }
+      ?: throw IllegalStateException("Firebase Firestore is not initialized.")
 
   private fun requireUserId(): String =
     auth?.currentUser?.uid
@@ -392,19 +397,8 @@ class DriverRepository(
     const val COLLECTION_APP_SETTINGS = "app_settings"
     const val DOC_DRIVER_APP_VERSION = "driver_app_version"
 
-    private fun ensureFirebase(context: Context): Boolean {
-      return try {
-        val appCtx = context.applicationContext
-        if (FirebaseApp.getApps(appCtx).isEmpty()) {
-          FirebaseApp.initializeApp(appCtx) != null
-        } else {
-          true
-        }
-      } catch (e: Exception) {
-        e.printStackTrace()
-        false
-      }
-    }
+    private fun ensureFirebase(context: Context): Boolean =
+      GoogleAuthHelper.ensureFirebaseInitialized(context)
 
     fun safeAuth(context: Context): FirebaseAuth? {
       return try {
@@ -420,16 +414,17 @@ class DriverRepository(
       return try {
         val appCtx = context.applicationContext
         if (!ensureFirebase(appCtx)) return null
+        val activeProjectId = runCatching { FirebaseApp.getInstance().options.projectId }.getOrNull()
         val dbId = runCatching { appCtx.getString(R.string.firestore_database_id).trim() }.getOrNull()
-        if (!dbId.isNullOrBlank()) {
+        if (activeProjectId == "local-deal-683e8" || dbId.isNullOrBlank()) {
+          FirebaseFirestore.getInstance()
+        } else {
           try {
             FirebaseFirestore.getInstance(dbId)
           } catch (e: Exception) {
             e.printStackTrace()
             FirebaseFirestore.getInstance()
           }
-        } else {
-          FirebaseFirestore.getInstance()
         }
       } catch (e: Exception) {
         e.printStackTrace()
@@ -437,11 +432,14 @@ class DriverRepository(
       }
     }
 
-    fun createSafe(context: Context, fallbackUserId: String? = null): DriverRepository =
-      DriverRepository(
-        db = safeFirestore(context),
-        auth = safeAuth(context),
+    fun createSafe(context: Context, fallbackUserId: String? = null): DriverRepository {
+      val appCtx = context.applicationContext
+      return DriverRepository(
+        db = safeFirestore(appCtx),
+        auth = safeAuth(appCtx),
         fallbackUserId = fallbackUserId,
+        appContext = appCtx,
       )
+    }
   }
 }
