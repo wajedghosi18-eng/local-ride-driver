@@ -66,14 +66,6 @@ class DriverRepository(
     val path = "$COLLECTION_DRIVERS/$uid"
     return try {
       val firestore = requireDb()
-      if (uid.isNotBlank()) {
-        val snap = firestore.collection(COLLECTION_DRIVERS).document(uid).get().await()
-        if (snap.exists()) {
-          return Result.success(
-            snap.toObject(TotoDriver::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-          )
-        }
-      }
       val trimmedEmail = email.trim()
       if (trimmedEmail.isNotBlank()) {
         val query = firestore.collection(COLLECTION_DRIVERS)
@@ -100,6 +92,14 @@ class DriverRepository(
               lowerDoc.toObject(TotoDriver::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
             )
           }
+        }
+      }
+      if (uid.isNotBlank()) {
+        val snap = firestore.collection(COLLECTION_DRIVERS).document(uid).get().await()
+        if (snap.exists()) {
+          return Result.success(
+            snap.toObject(TotoDriver::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+          )
         }
       }
       Result.success(null)

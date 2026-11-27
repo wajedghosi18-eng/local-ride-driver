@@ -84,49 +84,17 @@ fun GoogleSignInStep(
   val scope = rememberCoroutineScope()
   var isLoading by remember { mutableStateOf(false) }
 
-  val emailOnlyLauncher = rememberLauncherForActivityResult(
+  val googleSignInLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.StartActivityForResult()
   ) { activityResult ->
     GoogleAuthHelper.handleSignInActivityResult(
       context = context,
       data = activityResult.data,
-      isEmailOnlyAttempt = true,
       scope = scope,
       onSuccess = { accountResult ->
         isLoading = false
         onError(null)
         onSignedIn(accountResult)
-      },
-      onRetryEmailOnly = {},
-      onError = { msg ->
-        isLoading = false
-        onError(msg)
-      },
-    )
-  }
-
-  val idTokenLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.StartActivityForResult()
-  ) { activityResult ->
-    GoogleAuthHelper.handleSignInActivityResult(
-      context = context,
-      data = activityResult.data,
-      isEmailOnlyAttempt = false,
-      scope = scope,
-      onSuccess = { accountResult ->
-        isLoading = false
-        onError(null)
-        onSignedIn(accountResult)
-      },
-      onRetryEmailOnly = {
-        try {
-          emailOnlyLauncher.launch(GoogleAuthHelper.buildEmailOnlySignInIntent(context))
-        } catch (e: Exception) {
-          isLoading = false
-          val msg = "Google Sign-In fallback failed: ${e.localizedMessage ?: e.message ?: "Unknown error"}"
-          android.widget.Toast.makeText(context.applicationContext, msg, android.widget.Toast.LENGTH_LONG).show()
-          onError(msg)
-        }
       },
       onError = { msg ->
         isLoading = false
@@ -188,11 +156,7 @@ fun GoogleSignInStep(
         isLoading = true
         onError(null)
         try {
-          if (GoogleAuthHelper.hasValidIdTokenOption(context)) {
-            idTokenLauncher.launch(GoogleAuthHelper.buildIdTokenSignInIntent(context))
-          } else {
-            emailOnlyLauncher.launch(GoogleAuthHelper.buildEmailOnlySignInIntent(context))
-          }
+          googleSignInLauncher.launch(GoogleAuthHelper.buildSignInIntent(context))
         } catch (e: Exception) {
           isLoading = false
           val msg = "Unable to launch Google Sign-In: ${e.localizedMessage ?: e.message ?: "Unknown error"}"

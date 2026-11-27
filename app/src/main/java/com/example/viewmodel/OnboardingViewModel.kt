@@ -168,8 +168,9 @@ class OnboardingViewModel(
     val effectiveUid = user?.uid?.takeIf { it.isNotBlank() } ?: accountResult.uid
     val effectiveEmail = user?.email?.takeIf { it.isNotBlank() } ?: accountResult.email
     val effectiveName = user?.displayName?.takeIf { it.isNotBlank() } ?: accountResult.displayName
+    val effectivePhoto = accountResult.photoUrl
 
-    prefs.saveSignedInSession(effectiveUid, effectiveEmail, effectiveName)
+    prefs.saveSignedInSession(effectiveUid, effectiveEmail, effectiveName, effectivePhoto)
 
     _state.update {
       it.copy(
@@ -190,6 +191,7 @@ class OnboardingViewModel(
             resolvedUid,
             existing.email.ifBlank { effectiveEmail },
             existing.fullName.ifBlank { effectiveName },
+            effectivePhoto,
           )
           prefs.saveLanguage(AppLanguage.fromCode(existing.language))
           prefs.setOnboardingComplete(true)

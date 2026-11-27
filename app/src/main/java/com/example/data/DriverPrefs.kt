@@ -49,11 +49,17 @@ class DriverPrefs(context: Context) {
       .apply()
   }
 
-  fun saveSignedInSession(uid: String, email: String, displayName: String) {
+  fun saveSignedInSession(
+    uid: String,
+    email: String,
+    displayName: String,
+    photoUrl: String = "",
+  ) {
     prefs.edit()
       .putString(KEY_SIGNED_IN_UID, uid)
       .putString(KEY_SIGNED_IN_EMAIL, email)
       .putString(KEY_SIGNED_IN_NAME, displayName)
+      .putString(KEY_SIGNED_IN_PHOTO_URL, photoUrl)
       .apply()
   }
 
@@ -63,11 +69,14 @@ class DriverPrefs(context: Context) {
 
   fun getSavedDisplayName(): String? = prefs.getString(KEY_SIGNED_IN_NAME, null)?.takeIf { it.isNotBlank() }
 
+  fun getSavedPhotoUrl(): String? = prefs.getString(KEY_SIGNED_IN_PHOTO_URL, null)?.takeIf { it.isNotBlank() }
+
   fun clearSession() {
     prefs.edit()
       .remove(KEY_SIGNED_IN_UID)
       .remove(KEY_SIGNED_IN_EMAIL)
       .remove(KEY_SIGNED_IN_NAME)
+      .remove(KEY_SIGNED_IN_PHOTO_URL)
       .remove(KEY_ONBOARDING_COMPLETE)
       .apply()
   }
@@ -86,6 +95,7 @@ class DriverPrefs(context: Context) {
     const val KEY_SIGNED_IN_UID = "signed_in_uid"
     const val KEY_SIGNED_IN_EMAIL = "signed_in_email"
     const val KEY_SIGNED_IN_NAME = "signed_in_name"
+    const val KEY_SIGNED_IN_PHOTO_URL = "signed_in_photo_url"
     const val KEY_UPDATE_DISMISSED_VERSION = "update_dismissed_version"
     const val KEY_UPDATE_DISMISSED_AT = "update_dismissed_at"
     const val TWENTY_FOUR_HOURS_MS = 24L * 60L * 60L * 1000L
