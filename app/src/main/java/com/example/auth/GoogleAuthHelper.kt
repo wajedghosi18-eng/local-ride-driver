@@ -1,18 +1,20 @@
 package com.example.auth
 
-import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import android.widget.Toast
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
-import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.credentials.exceptions.GetCredentialException
 import com.example.R
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
+import com.google.android.gms.common.api.ApiException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
-import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.Firebase
@@ -28,6 +30,13 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+
+data class GoogleSignInAccountResult(
+  val uid: String,
+  val email: String,
+  val displayName: String,
+  val isFirebaseAuthenticated: Boolean,
+)
 
 object GoogleAuthHelper {
   private const val TAG = "Auth"
@@ -87,11 +96,147 @@ object GoogleAuthHelper {
 
   fun resolveDefaultWebClientId(context: Context): String? {
     return try {
-      val value = context.getString(R.string.default_web_client_id).trim()
+      val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+      val value = if (resId != 0) context.getString(resId).trim() else context.getString(R.string.default_web_client_id).trim()
       value.takeIf { isValidWebClientId(it) }
     } catch (e: Exception) {
       e.printStackTrace()
       null
+    }
+  }
+
+  fun buildIdTokenSignInIntent(context: Context): Intent {
+    ensureFirebaseInitialized(context)
+    val clientId = resolveDefaultWebClientId(context)
+    val gso = if (clientId != null) {
+      GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+        .requestIdToken(clientId)
+        .requestEmail()
+        .build()
+    } else {
+      GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+        .requestEmail()
+        .build()
+    }
+    return GoogleSignIn.getClient(context, gso).signInIntent
+  }
+
+  fun buildEmailOnlySignInIntent(context: Context): Intent {
+    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+      .requestEmail()
+      .build()
+    return GoogleSignIn.getClient(context, gso).signInIntent
+  }
+
+  fun hasValidIdTokenOption(context: Context): Boolean = resolveDefaultWebClientId(context) != null
+
+  private fun fallbackUidForAccount(account: GoogleSignInAccount): String {
+    val rawId = account.id?.trim().orEmpty()
+    if (rawId.isNotEmpty()) return "google_$rawId"
+    val emailPart = account.email.orEmpty().trim().lowercase().replace(Regex("[^a-zA-Z0-9_-]"), "_")
+    return if (emailPart.isNotEmpty()) "email_$emailPart" else "driver_${System.currentTimeMillis()}"
+  }
+
+  fun handleSignInActivityResult(
+    context: Context,
+    data: Intent?,
+    isEmailOnlyAttempt: Boolean,
+    scope: CoroutineScope,
+    onSuccess: (GoogleSignInAccountResult) -> Unit,
+    onRetryEmailOnly: () -> Unit,
+    onError: (String) -> Unit,
+  ) {
+    scope.launch {
+      try {
+        val task = GoogleSignIn.getSignedInAccountFromIntent(data)
+        val account = task.getResult(ApiException::class.java)
+        val idToken = account.idToken
+        val email = account.email.orEmpty().trim()
+        val displayName = account.displayName.orEmpty().trim()
+
+        if (!isEmailOnlyAttempt && !idToken.isNullOrBlank()) {
+          val firebaseAuth = safeAuth(context)
+          if (firebaseAuth != null) {
+            try {
+              val authResult = firebaseAuth
+                .signInWithCredential(GoogleAuthProvider.getCredential(idToken, null))
+                .await()
+              val fbUser = authResult.user ?: firebaseAuth.currentUser
+              if (fbUser != null) {
+                onSuccess(
+                  GoogleSignInAccountResult(
+                    uid = fbUser.uid,
+                    email = fbUser.email?.ifBlank { email } ?: email,
+                    displayName = fbUser.displayName?.ifBlank { displayName } ?: displayName,
+                    isFirebaseAuthenticated = true,
+                  )
+                )
+                return@launch
+              }
+            } catch (e: CancellationException) {
+              throw e
+            } catch (e: Exception) {
+              Log.w(TAG, "Firebase signInWithCredential failed, continuing with Google email fallback: ${e.message}", e)
+              if (email.isNotBlank()) {
+                onSuccess(
+                  GoogleSignInAccountResult(
+                    uid = fallbackUidForAccount(account),
+                    email = email,
+                    displayName = displayName,
+                    isFirebaseAuthenticated = false,
+                  )
+                )
+                return@launch
+              }
+              val msg = "Firebase Sign-In failed (${e.javaClass.simpleName}): ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+              showErrorToast(context, msg)
+              onError(msg)
+              return@launch
+            }
+          }
+        }
+
+        if (email.isNotBlank() || !account.id.isNullOrBlank()) {
+          onSuccess(
+            GoogleSignInAccountResult(
+              uid = fallbackUidForAccount(account),
+              email = email,
+              displayName = displayName,
+              isFirebaseAuthenticated = false,
+            )
+          )
+        } else {
+          val msg = "Google account did not return an email address. Please try another Gmail account."
+          showErrorToast(context, msg)
+          onError(msg)
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: ApiException) {
+        Log.e(TAG, "GoogleSignIn ApiException (emailOnly=$isEmailOnlyAttempt, code=${e.statusCode})", e)
+        if (!isEmailOnlyAttempt && e.statusCode != GoogleSignInStatusCodes.SIGN_IN_CANCELLED) {
+          Log.i(TAG, "Retrying Google Sign-In with DEFAULT_SIGN_IN email-only fallback after status ${e.statusCode}")
+          onRetryEmailOnly()
+        } else {
+          val statusDesc = GoogleSignInStatusCodes.getStatusCodeString(e.statusCode)
+          val msg = if (e.statusCode == GoogleSignInStatusCodes.SIGN_IN_CANCELLED) {
+            "Google Sign-In was cancelled (code ${e.statusCode}). Please select a Gmail account to continue."
+          } else {
+            "Google Sign-In failed (code ${e.statusCode} - $statusDesc): ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+          }
+          showErrorToast(context, msg)
+          onError(msg)
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Google Sign-In failed unexpectedly", e)
+        if (!isEmailOnlyAttempt) {
+          onRetryEmailOnly()
+        } else {
+          val msg = "Google Sign-In failed (${e.javaClass.simpleName}): ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+          showErrorToast(context, msg)
+          onError(msg)
+        }
+      }
     }
   }
 
@@ -161,94 +306,6 @@ object GoogleAuthHelper {
     }
   }
 
-  private fun showErrorToastSync(context: Context, message: String) {
-    try {
-      Toast.makeText(context.applicationContext, message, Toast.LENGTH_LONG).show()
-    } catch (e: Exception) {
-      Log.w(TAG, "Unable to show Toast: ${e.message}")
-    }
-  }
-
-  fun onGoogleSignInClicked(
-    context: Context,
-    credentialManager: CredentialManager?,
-    scope: CoroutineScope,
-    onAuthSuccess: () -> Unit,
-    onAuthError: (String) -> Unit,
-    onAuthCancelled: () -> Unit,
-  ) {
-    ensureFirebaseInitialized(context)
-    val clientId = resolveDefaultWebClientId(context) ?: run {
-      val msg = "Google Sign-In configuration missing or invalid Web Client ID."
-      showErrorToastSync(context, msg)
-      onAuthError(msg)
-      return
-    }
-    val activity = context as? Activity ?: run {
-      val msg = "Unable to launch Google Sign-In without an Activity context."
-      showErrorToastSync(context, msg)
-      onAuthError(msg)
-      return
-    }
-    val cm = credentialManager ?: safeCredentialManager(context) ?: run {
-      val msg = "Google Credential Manager is unavailable on this device."
-      showErrorToastSync(context, msg)
-      onAuthError(msg)
-      return
-    }
-
-    val request = try {
-      val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
-      GetCredentialRequest.Builder()
-        .addCredentialOption(signInOption)
-        .build()
-    } catch (e: Exception) {
-      e.printStackTrace()
-      val msg = "Google Sign-In setup failed: ${e.javaClass.simpleName}: ${e.localizedMessage ?: e.message ?: "Invalid configuration"}"
-      showErrorToastSync(context, msg)
-      onAuthError(msg)
-      return
-    }
-
-    scope.launch {
-      try {
-        val cred = cm.getCredential(activity, request).credential
-        if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-          val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-          val auth = safeAuth(context) ?: run {
-            val msg = "FirebaseAuth is unavailable. Ensure google-services.json matches com.localdeal.driver."
-            showErrorToast(context, msg)
-            onAuthError(msg)
-            return@launch
-          }
-          auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
-          onAuthSuccess()
-        } else {
-          val msg = "Google Sign-In failed: Unexpected credential type (${cred.type})"
-          showErrorToast(context, msg)
-          onAuthError(msg)
-        }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: GetCredentialCancellationException) {
-        Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
-        onAuthCancelled()
-      } catch (e: GetCredentialException) {
-        e.printStackTrace()
-        Log.e(TAG, "Google Sign-In credential error (${e.type})", e)
-        val msg = "Google Sign-In failed (${e.javaClass.simpleName}): ${e.localizedMessage ?: e.message ?: e.type}"
-        showErrorToast(context, msg)
-        onAuthError(msg)
-      } catch (e: Exception) {
-        e.printStackTrace()
-        Log.e(TAG, "Google Sign-In failed", e)
-        val msg = "Google Sign-In failed (${e.javaClass.simpleName}): ${e.localizedMessage ?: e.message ?: "Unknown error"}"
-        showErrorToast(context, msg)
-        onAuthError(msg)
-      }
-    }
-  }
-
   fun signOut(
     credentialManager: CredentialManager?,
     scope: CoroutineScope,
@@ -261,16 +318,27 @@ object GoogleAuthHelper {
           credentialManager?.clearCredentialState(ClearCredentialStateRequest())
         } catch (e: Exception) {
           Log.w(TAG, "Failed to clear credential state: ${e.message}")
-        } finally {
-          try {
-            if (context != null) {
-              safeAuth(context)?.signOut()
-            } else {
-              Firebase.auth.signOut()
-            }
-          } catch (e: Exception) {
-            e.printStackTrace()
+        }
+        try {
+          if (context != null) {
+            val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+              .requestEmail()
+              .build()
+            GoogleSignIn.getClient(context, gso).signOut().await()
           }
+        } catch (e: Exception) {
+          Log.w(TAG, "Failed to sign out GoogleSignInClient: ${e.message}")
+        }
+        try {
+          if (context != null) {
+            safeAuth(context)?.signOut()
+          } else {
+            Firebase.auth.signOut()
+          }
+        } catch (e: Exception) {
+          e.printStackTrace()
+        }
+        withContext(Dispatchers.Main) {
           onSignOutComplete()
         }
       }

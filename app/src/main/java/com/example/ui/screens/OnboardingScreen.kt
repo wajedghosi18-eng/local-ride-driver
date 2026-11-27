@@ -77,7 +77,7 @@ import kotlinx.coroutines.launch
 fun OnboardingScreen(
   viewModel: OnboardingViewModel,
   state: OnboardingUiState,
-  onCompleted: () -> Unit,
+  onCompleted: (String) -> Unit,
 ) {
   val strings = remember(state.language) { stringsFor(state.language) }
 
@@ -193,7 +193,12 @@ fun OnboardingScreen(
           5 -> GoogleSignInStep(
             strings = strings,
             isCheckingProfile = state.isCheckingExistingProfile,
-            onSignedIn = { viewModel.onGoogleSignedIn(onExistingProfileFound = onCompleted) },
+            onSignedIn = { accountResult ->
+              viewModel.onGoogleAccountSignedIn(
+                accountResult = accountResult,
+                onExistingProfileFound = onCompleted,
+              )
+            },
             onError = { viewModel.setError(it) },
           )
           6 -> NameAndMobileStep(

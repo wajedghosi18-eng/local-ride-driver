@@ -8,11 +8,15 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
@@ -22,6 +26,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -119,16 +124,24 @@ fun LocalRideDriverApp() {
   val credentialManager = remember(context) { GoogleAuthHelper.safeCredentialManager(context) }
   val prefs = remember(context) { DriverPrefs(context) }
   val firebaseAuth = remember(context) { GoogleAuthHelper.safeAuth(context) }
-  var currentUser by remember { mutableStateOf(GoogleAuthHelper.safeCurrentUser(context)) }
+  var activeDriverId by remember {
+    mutableStateOf(
+      GoogleAuthHelper.safeCurrentUser(context)?.uid
+        ?: if (prefs.isOnboardingComplete()) prefs.getSavedUserId() else null
+    )
+  }
   var forceOnboarding by remember { mutableStateOf(false) }
 
   DisposableEffect(firebaseAuth) {
     val listener = FirebaseAuth.AuthStateListener { auth ->
-      currentUser = try {
-        auth.currentUser
+      val fbUid = try {
+        auth.currentUser?.uid
       } catch (e: Exception) {
         e.printStackTrace()
         null
+      }
+      if (!fbUid.isNullOrBlank()) {
+        activeDriverId = fbUid
       }
     }
     try {
@@ -148,28 +161,28 @@ fun LocalRideDriverApp() {
   // Non-blocking background silent sign-in only if onboarding was already completed;
   // first-time launch renders Step 1 (Language Selection) immediately with zero blocking.
   LaunchedEffect(Unit) {
-    if (currentUser == null && prefs.isOnboardingComplete()) {
+    if (activeDriverId == null && prefs.isOnboardingComplete()) {
       GoogleAuthHelper.attemptAutoSignIn(
         context = context,
         credentialManager = credentialManager,
         scope = scope,
         onAuthSuccess = {
-          currentUser = GoogleAuthHelper.safeCurrentUser(context)
+          activeDriverId = GoogleAuthHelper.safeCurrentUser(context)?.uid ?: prefs.getSavedUserId()
         },
         onUnauthenticated = {},
       )
     }
   }
 
-  val user = currentUser
-  if (user == null || forceOnboarding) {
+  val driverId = activeDriverId
+  if (driverId.isNullOrBlank() || forceOnboarding) {
     val onboardingViewModel: OnboardingViewModel = viewModel(
-      key = user?.uid ?: "guest",
+      key = driverId ?: "guest",
       factory = viewModelFactory {
         initializer {
           val app = checkNotNull(this[APPLICATION_KEY])
           OnboardingViewModel(
-            repository = DriverRepository.createSafe(app),
+            repository = DriverRepository.createSafe(app, driverId),
             prefs = DriverPrefs(app),
           )
         }
@@ -179,20 +192,21 @@ fun LocalRideDriverApp() {
     OnboardingScreen(
       viewModel = onboardingViewModel,
       state = onboardingState,
-      onCompleted = {
+      onCompleted = { resolvedDriverId ->
         forceOnboarding = false
-        currentUser = GoogleAuthHelper.safeCurrentUser(context)
+        activeDriverId = resolvedDriverId
       },
     )
   } else {
-    key(user.uid) {
+    key(driverId) {
       AuthenticatedDriverRoot(
-        currentUserId = user.uid,
+        currentUserId = driverId,
         prefs = prefs,
         onRequireRegistration = { forceOnboarding = true },
         onSignedOut = {
+          prefs.clearSession()
           forceOnboarding = false
-          currentUser = null
+          activeDriverId = null
         },
       )
     }
@@ -216,7 +230,7 @@ private fun AuthenticatedDriverRoot(
       initializer {
         val app = checkNotNull(this[APPLICATION_KEY])
         DriverMainViewModel(
-          repository = DriverRepository.createSafe(app),
+          repository = DriverRepository.createSafe(app, currentUserId),
           prefs = DriverPrefs(app),
           currentUserId = currentUserId,
         )
@@ -250,11 +264,32 @@ private fun AuthenticatedDriverRoot(
     }
     is UiState.Error -> {
       Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Box(contentAlignment = Alignment.Center) {
-          Text(
-            text = profileUi.message,
-            color = MaterialTheme.colorScheme.error,
-          )
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+          contentAlignment = Alignment.Center,
+        ) {
+          Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            Text(
+              text = profileUi.message,
+              color = MaterialTheme.colorScheme.error,
+              style = MaterialTheme.typography.bodyLarge,
+            )
+            Spacer(Modifier.height(4.dp))
+            Button(
+              onClick = {
+                GoogleAuthHelper.signOut(credentialManager, scope, context = context) {
+                  onSignedOut()
+                }
+              },
+            ) {
+              Text(strings.signOut)
+            }
+          }
         }
       }
     }

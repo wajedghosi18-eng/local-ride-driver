@@ -25,6 +25,7 @@ import kotlinx.coroutines.tasks.await
 class DriverRepository(
   private val db: FirebaseFirestore?,
   private val auth: FirebaseAuth? = runCatching { Firebase.auth }.getOrNull(),
+  private val fallbackUserId: String? = null,
 ) {
   constructor(context: Context) : this(
     db = safeFirestore(context),
@@ -36,6 +37,7 @@ class DriverRepository(
 
   private fun requireUserId(): String =
     auth?.currentUser?.uid
+      ?: fallbackUserId?.takeIf { it.isNotBlank() }
       ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
 
   suspend fun getDriverProfile(uid: String): Result<TotoDriver?> {
@@ -52,6 +54,55 @@ class DriverRepository(
           snap.toObject(TotoDriver::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
         )
       }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.GET, path)
+      Result.failure(e)
+    }
+  }
+
+  suspend fun findDriverProfileByEmailOrUid(uid: String, email: String): Result<TotoDriver?> {
+    val path = "$COLLECTION_DRIVERS/$uid"
+    return try {
+      val firestore = requireDb()
+      if (uid.isNotBlank()) {
+        val snap = firestore.collection(COLLECTION_DRIVERS).document(uid).get().await()
+        if (snap.exists()) {
+          return Result.success(
+            snap.toObject(TotoDriver::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+          )
+        }
+      }
+      val trimmedEmail = email.trim()
+      if (trimmedEmail.isNotBlank()) {
+        val query = firestore.collection(COLLECTION_DRIVERS)
+          .whereEqualTo("email", trimmedEmail)
+          .limit(1)
+          .get()
+          .await()
+        val firstDoc = query.documents.firstOrNull()
+        if (firstDoc != null && firstDoc.exists()) {
+          return Result.success(
+            firstDoc.toObject(TotoDriver::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+          )
+        }
+        val lowerEmail = trimmedEmail.lowercase()
+        if (lowerEmail != trimmedEmail) {
+          val lowerQuery = firestore.collection(COLLECTION_DRIVERS)
+            .whereEqualTo("email", lowerEmail)
+            .limit(1)
+            .get()
+            .await()
+          val lowerDoc = lowerQuery.documents.firstOrNull()
+          if (lowerDoc != null && lowerDoc.exists()) {
+            return Result.success(
+              lowerDoc.toObject(TotoDriver::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            )
+          }
+        }
+      }
+      Result.success(null)
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
@@ -94,7 +145,7 @@ class DriverRepository(
     var path = COLLECTION_DRIVERS
     return try {
       val firestore = requireDb()
-      val uid = requireUserId()
+      val uid = driver.userId.takeIf { auth?.currentUser?.uid == null && it.isNotBlank() } ?: requireUserId()
       path = "$COLLECTION_DRIVERS/$uid"
       require(driver.fullName.trim().length in 2..100) { "Full name must be 2..100 chars" }
       require(driver.mobileNumber.trim().length in 10..15) { "Mobile must be 10..15 chars" }
@@ -386,7 +437,11 @@ class DriverRepository(
       }
     }
 
-    fun createSafe(context: Context): DriverRepository =
-      DriverRepository(db = safeFirestore(context), auth = safeAuth(context))
+    fun createSafe(context: Context, fallbackUserId: String? = null): DriverRepository =
+      DriverRepository(
+        db = safeFirestore(context),
+        auth = safeAuth(context),
+        fallbackUserId = fallbackUserId,
+      )
   }
 }

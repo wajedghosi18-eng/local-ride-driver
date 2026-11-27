@@ -1,7 +1,9 @@
 package com.example.viewmodel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.auth.GoogleSignInAccountResult
 import com.example.data.DriverPrefs
 import com.example.data.DriverRepository
 import com.example.model.AppLanguage
@@ -26,6 +28,8 @@ data class OnboardingUiState(
   val village: String = "",
   val lat: Double = 22.4257,
   val lng: Double = 87.3199,
+  val signedInUid: String = "",
+  val signedInEmail: String = "",
   val fullName: String = "",
   val mobileNumber: String = "",
   val passportPhotoBase64: String = "",
@@ -55,10 +59,15 @@ class OnboardingViewModel(
   private val _state = MutableStateFlow(
     run {
       val existingUser = safeCurrentUser()
+      val savedUid = prefs.getSavedUserId().orEmpty()
+      val savedEmail = prefs.getSavedEmail().orEmpty()
+      val savedName = prefs.getSavedDisplayName().orEmpty()
       OnboardingUiState(
         language = prefs.getLanguage(),
         currentStep = if (existingUser != null) 6 else 1,
-        fullName = existingUser?.displayName.orEmpty(),
+        signedInUid = existingUser?.uid ?: savedUid,
+        signedInEmail = existingUser?.email ?: savedEmail,
+        fullName = existingUser?.displayName ?: savedName,
       )
     }
   )
@@ -151,50 +160,77 @@ class OnboardingViewModel(
     _state.update { it.copy(currentStep = step.coerceIn(1, 8), errorMessage = null) }
   }
 
-  fun onGoogleSignedIn(onExistingProfileFound: () -> Unit) {
-    val user = safeCurrentUser() ?: return
+  fun onGoogleAccountSignedIn(
+    accountResult: GoogleSignInAccountResult,
+    onExistingProfileFound: (String) -> Unit,
+  ) {
+    val user = safeCurrentUser()
+    val effectiveUid = user?.uid?.takeIf { it.isNotBlank() } ?: accountResult.uid
+    val effectiveEmail = user?.email?.takeIf { it.isNotBlank() } ?: accountResult.email
+    val effectiveName = user?.displayName?.takeIf { it.isNotBlank() } ?: accountResult.displayName
+
+    prefs.saveSignedInSession(effectiveUid, effectiveEmail, effectiveName)
+
     _state.update {
       it.copy(
         isCheckingExistingProfile = true,
-        fullName = it.fullName.ifBlank { user.displayName.orEmpty() },
+        signedInUid = effectiveUid,
+        signedInEmail = effectiveEmail,
+        fullName = it.fullName.ifBlank { effectiveName },
         errorMessage = null,
       )
     }
+
     viewModelScope.launch {
-      val result = repository.getDriverProfile(user.uid)
+      val result = repository.findDriverProfileByEmailOrUid(effectiveUid, effectiveEmail)
       result.onSuccess { existing ->
         if (existing != null) {
+          val resolvedUid = existing.userId.ifBlank { effectiveUid }
+          prefs.saveSignedInSession(
+            resolvedUid,
+            existing.email.ifBlank { effectiveEmail },
+            existing.fullName.ifBlank { effectiveName },
+          )
           prefs.saveLanguage(AppLanguage.fromCode(existing.language))
           prefs.setOnboardingComplete(true)
-          _state.update { it.copy(isCheckingExistingProfile = false) }
-          onExistingProfileFound()
+          _state.update { it.copy(isCheckingExistingProfile = false, errorMessage = null) }
+          onExistingProfileFound(resolvedUid)
         } else {
           _state.update {
             it.copy(
               isCheckingExistingProfile = false,
               currentStep = 6,
-              fullName = it.fullName.ifBlank { user.displayName.orEmpty() },
+              fullName = it.fullName.ifBlank { effectiveName },
+              errorMessage = null,
             )
           }
         }
       }.onFailure { err ->
+        Log.w(TAG, "Profile check failed after Google Sign-In; advancing to Step 6: ${err.message}", err)
         _state.update {
           it.copy(
             isCheckingExistingProfile = false,
-            errorMessage = err.localizedMessage ?: "Failed to check profile",
+            currentStep = 6,
+            fullName = it.fullName.ifBlank { effectiveName },
+            errorMessage = null,
           )
         }
       }
     }
   }
 
-  fun completeRegistration(onCompleted: () -> Unit) {
+  fun completeRegistration(onCompleted: (String) -> Unit) {
     val user = safeCurrentUser()
-    if (user == null) {
+    val s = _state.value
+    val uid = user?.uid?.takeIf { it.isNotBlank() }
+      ?: s.signedInUid.ifBlank { prefs.getSavedUserId().orEmpty() }
+    val email = user?.email?.takeIf { it.isNotBlank() }
+      ?: s.signedInEmail.ifBlank { prefs.getSavedEmail().orEmpty() }
+
+    if (uid.isBlank()) {
       _state.update { it.copy(currentStep = 5, errorMessage = "Please sign in with Google first.") }
       return
     }
-    val s = _state.value
     if (s.fullName.trim().length < 2) {
       _state.update { it.copy(currentStep = 6, errorMessage = "Full name is required.") }
       return
@@ -207,8 +243,8 @@ class OnboardingViewModel(
     _state.update { it.copy(isSubmitting = true, errorMessage = null) }
     viewModelScope.launch {
       val driver = TotoDriver(
-        userId = user.uid,
-        email = user.email.orEmpty(),
+        userId = uid,
+        email = email,
         language = s.language.code,
         vehicleType = s.vehicleType.id,
         district = s.district,
@@ -229,10 +265,11 @@ class OnboardingViewModel(
       )
       val saveResult = repository.saveDriverProfile(driver)
       saveResult.onSuccess {
+        prefs.saveSignedInSession(uid, email, s.fullName.trim())
         prefs.saveLanguage(s.language)
         prefs.setOnboardingComplete(true)
         _state.update { it.copy(isSubmitting = false) }
-        onCompleted()
+        onCompleted(uid)
       }.onFailure { err ->
         _state.update {
           it.copy(
@@ -242,5 +279,9 @@ class OnboardingViewModel(
         }
       }
     }
+  }
+
+  private companion object {
+    const val TAG = "OnboardingVM"
   }
 }

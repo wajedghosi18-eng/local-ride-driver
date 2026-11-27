@@ -99,6 +99,7 @@ dependencies {
   implementation(libs.googleid)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
+  implementation(libs.play.services.auth)
   implementation(libs.play.services.location)
 
   // Unused template dependencies commented out for APK size and build speed:

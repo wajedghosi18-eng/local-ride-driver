@@ -49,6 +49,29 @@ class DriverPrefs(context: Context) {
       .apply()
   }
 
+  fun saveSignedInSession(uid: String, email: String, displayName: String) {
+    prefs.edit()
+      .putString(KEY_SIGNED_IN_UID, uid)
+      .putString(KEY_SIGNED_IN_EMAIL, email)
+      .putString(KEY_SIGNED_IN_NAME, displayName)
+      .apply()
+  }
+
+  fun getSavedUserId(): String? = prefs.getString(KEY_SIGNED_IN_UID, null)?.takeIf { it.isNotBlank() }
+
+  fun getSavedEmail(): String? = prefs.getString(KEY_SIGNED_IN_EMAIL, null)?.takeIf { it.isNotBlank() }
+
+  fun getSavedDisplayName(): String? = prefs.getString(KEY_SIGNED_IN_NAME, null)?.takeIf { it.isNotBlank() }
+
+  fun clearSession() {
+    prefs.edit()
+      .remove(KEY_SIGNED_IN_UID)
+      .remove(KEY_SIGNED_IN_EMAIL)
+      .remove(KEY_SIGNED_IN_NAME)
+      .remove(KEY_ONBOARDING_COMPLETE)
+      .apply()
+  }
+
   fun clearAllOnboarding() {
     prefs.edit()
       .remove(KEY_ONBOARDING_COMPLETE)
@@ -60,6 +83,9 @@ class DriverPrefs(context: Context) {
     const val KEY_LANGUAGE = "selected_language"
     const val KEY_LANGUAGE_SELECTED = "has_selected_language"
     const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
+    const val KEY_SIGNED_IN_UID = "signed_in_uid"
+    const val KEY_SIGNED_IN_EMAIL = "signed_in_email"
+    const val KEY_SIGNED_IN_NAME = "signed_in_name"
     const val KEY_UPDATE_DISMISSED_VERSION = "update_dismissed_version"
     const val KEY_UPDATE_DISMISSED_AT = "update_dismissed_at"
     const val TWENTY_FOUR_HOURS_MS = 24L * 60L * 60L * 1000L

@@ -77,13 +77,63 @@ import kotlinx.coroutines.launch
 fun GoogleSignInStep(
   strings: AppStrings,
   isCheckingProfile: Boolean,
-  onSignedIn: () -> Unit,
-  onError: (String) -> Unit,
+  onSignedIn: (com.example.auth.GoogleSignInAccountResult) -> Unit,
+  onError: (String?) -> Unit,
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
-  val credentialManager = remember(context) { GoogleAuthHelper.safeCredentialManager(context) }
   var isLoading by remember { mutableStateOf(false) }
+
+  val emailOnlyLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.StartActivityForResult()
+  ) { activityResult ->
+    GoogleAuthHelper.handleSignInActivityResult(
+      context = context,
+      data = activityResult.data,
+      isEmailOnlyAttempt = true,
+      scope = scope,
+      onSuccess = { accountResult ->
+        isLoading = false
+        onError(null)
+        onSignedIn(accountResult)
+      },
+      onRetryEmailOnly = {},
+      onError = { msg ->
+        isLoading = false
+        onError(msg)
+      },
+    )
+  }
+
+  val idTokenLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.StartActivityForResult()
+  ) { activityResult ->
+    GoogleAuthHelper.handleSignInActivityResult(
+      context = context,
+      data = activityResult.data,
+      isEmailOnlyAttempt = false,
+      scope = scope,
+      onSuccess = { accountResult ->
+        isLoading = false
+        onError(null)
+        onSignedIn(accountResult)
+      },
+      onRetryEmailOnly = {
+        try {
+          emailOnlyLauncher.launch(GoogleAuthHelper.buildEmailOnlySignInIntent(context))
+        } catch (e: Exception) {
+          isLoading = false
+          val msg = "Google Sign-In fallback failed: ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+          android.widget.Toast.makeText(context.applicationContext, msg, android.widget.Toast.LENGTH_LONG).show()
+          onError(msg)
+        }
+      },
+      onError = { msg ->
+        isLoading = false
+        onError(msg)
+      },
+    )
+  }
 
   Column(
     modifier = Modifier
@@ -136,22 +186,19 @@ fun GoogleSignInStep(
     Button(
       onClick = {
         isLoading = true
-        GoogleAuthHelper.onGoogleSignInClicked(
-          context = context,
-          credentialManager = credentialManager,
-          scope = scope,
-          onAuthSuccess = {
-            isLoading = false
-            onSignedIn()
-          },
-          onAuthError = { msg ->
-            isLoading = false
-            onError(msg)
-          },
-          onAuthCancelled = {
-            isLoading = false
-          },
-        )
+        onError(null)
+        try {
+          if (GoogleAuthHelper.hasValidIdTokenOption(context)) {
+            idTokenLauncher.launch(GoogleAuthHelper.buildIdTokenSignInIntent(context))
+          } else {
+            emailOnlyLauncher.launch(GoogleAuthHelper.buildEmailOnlySignInIntent(context))
+          }
+        } catch (e: Exception) {
+          isLoading = false
+          val msg = "Unable to launch Google Sign-In: ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+          android.widget.Toast.makeText(context.applicationContext, msg, android.widget.Toast.LENGTH_LONG).show()
+          onError(msg)
+        }
       },
       enabled = !isLoading && !isCheckingProfile,
       modifier = Modifier
