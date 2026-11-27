@@ -29,6 +29,7 @@ data class GoogleSignInAccountResult(
 
 object GoogleAuthHelper {
   private const val TAG = "Auth"
+  private const val FALLBACK_API_KEY = "AIzaSyAbey3vlWy67ifkBQbK8RWlXBF1f2kYnbI"
   private const val FALLBACK_PROJECT_ID = "local-deal-683e8"
   private const val FALLBACK_APP_ID = "1:153133574988:android:ba957e6b4e51ecc632bde9"
   private const val FALLBACK_STORAGE_BUCKET = "local-deal-683e8.firebasestorage.app"
@@ -112,14 +113,9 @@ object GoogleAuthHelper {
       }
 
       val assetConfig = readConfigFromAssets(appContext)
-      val apiKey = resolveStringResource(appContext, "google_api_key") ?: assetConfig?.apiKey
-
-      if (apiKey.isNullOrBlank()) {
-        lastInitError = "Missing Firebase API key in google-services.json / assets / Secrets"
-        Log.e(TAG, lastInitError!!)
-        return false
-      }
-
+      val apiKey = resolveStringResource(appContext, "google_api_key")
+        ?: assetConfig?.apiKey
+        ?: FALLBACK_API_KEY
       val projectId = resolveStringResource(appContext, "project_id")
         ?: assetConfig?.projectId
         ?: FALLBACK_PROJECT_ID
@@ -134,11 +130,11 @@ object GoogleAuthHelper {
         ?: FALLBACK_GCM_SENDER_ID
 
       val options = FirebaseOptions.Builder()
-        .setProjectId(projectId)
+        .setApiKey(apiKey)
         .setApplicationId(applicationId)
+        .setProjectId(projectId)
         .setStorageBucket(storageBucket)
         .setGcmSenderId(gcmSenderId)
-        .setApiKey(apiKey)
         .build()
 
       FirebaseApp.initializeApp(appContext, options)
