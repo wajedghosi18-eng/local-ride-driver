@@ -58,8 +58,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import android.app.Activity
+import android.widget.Toast
 import androidx.core.content.ContextCompat
-import androidx.credentials.CredentialManager
 import com.example.R
 import com.example.auth.GoogleAuthHelper
 import com.example.localization.AppStrings
@@ -81,23 +82,22 @@ fun GoogleSignInStep(
   onError: (String?) -> Unit,
 ) {
   val context = LocalContext.current
-  val scope = rememberCoroutineScope()
-  var isLoading by remember { mutableStateOf(false) }
+  var isLaunchingPicker by remember { mutableStateOf(false) }
+  var manualGmail by remember { mutableStateOf("") }
 
-  val googleSignInLauncher = rememberLauncherForActivityResult(
+  val accountPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.StartActivityForResult()
   ) { activityResult ->
-    GoogleAuthHelper.handleSignInActivityResult(
+    isLaunchingPicker = false
+    GoogleAuthHelper.handleAccountPickerResult(
       context = context,
+      resultCode = activityResult.resultCode,
       data = activityResult.data,
-      scope = scope,
       onSuccess = { accountResult ->
-        isLoading = false
         onError(null)
         onSignedIn(accountResult)
       },
-      onError = { msg ->
-        isLoading = false
+      onNoAccountSelected = { msg ->
         onError(msg)
       },
     )
@@ -149,29 +149,27 @@ fun GoogleSignInStep(
       }
     }
 
-    Spacer(Modifier.weight(1f, fill = true))
-
     Button(
       onClick = {
-        isLoading = true
+        isLaunchingPicker = true
         onError(null)
         try {
-          googleSignInLauncher.launch(GoogleAuthHelper.buildSignInIntent(context))
+          accountPickerLauncher.launch(GoogleAuthHelper.buildAccountPickerIntent())
         } catch (e: Exception) {
-          isLoading = false
-          val msg = "Unable to launch Google Sign-In: ${e.localizedMessage ?: e.message ?: "Unknown error"}"
-          android.widget.Toast.makeText(context.applicationContext, msg, android.widget.Toast.LENGTH_LONG).show()
+          isLaunchingPicker = false
+          val msg = "Unable to open Google account picker: ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+          Toast.makeText(context.applicationContext, msg, Toast.LENGTH_LONG).show()
           onError(msg)
         }
       },
-      enabled = !isLoading && !isCheckingProfile,
+      enabled = !isLaunchingPicker && !isCheckingProfile,
       modifier = Modifier
         .fillMaxWidth()
         .height(56.dp)
         .testTag("google_sign_in_button"),
       shape = RoundedCornerShape(16.dp),
     ) {
-      if (isLoading || isCheckingProfile) {
+      if (isLaunchingPicker || isCheckingProfile) {
         CircularProgressIndicator(
           modifier = Modifier.size(22.dp),
           color = MaterialTheme.colorScheme.onPrimary,
@@ -181,6 +179,44 @@ fun GoogleSignInStep(
         Text(if (isCheckingProfile) strings.checkingProfile else strings.loading)
       } else {
         Text(strings.signInWithGoogle, style = MaterialTheme.typography.titleMedium)
+      }
+    }
+
+    OutlinedTextField(
+      value = manualGmail,
+      onValueChange = {
+        manualGmail = it
+        onError(null)
+      },
+      label = { Text(strings.orEnterGmailLabel) },
+      placeholder = { Text(strings.gmailHint) },
+      keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+      singleLine = true,
+      shape = RoundedCornerShape(14.dp),
+      modifier = Modifier
+        .fillMaxWidth()
+        .testTag("manual_gmail_input"),
+    )
+
+    if (manualGmail.isNotBlank()) {
+      OutlinedButton(
+        onClick = {
+          val trimmed = manualGmail.trim()
+          if (!GoogleAuthHelper.isValidEmail(trimmed)) {
+            onError(strings.invalidEmailError)
+          } else {
+            onError(null)
+            onSignedIn(GoogleAuthHelper.buildResultForEmail(context, trimmed))
+          }
+        },
+        enabled = !isLaunchingPicker && !isCheckingProfile,
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(52.dp)
+          .testTag("manual_gmail_continue_button"),
+        shape = RoundedCornerShape(14.dp),
+      ) {
+        Text(strings.continueWithEmailBtn, style = MaterialTheme.typography.titleMedium)
       }
     }
   }

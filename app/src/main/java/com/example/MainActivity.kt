@@ -121,7 +121,6 @@ class MainActivity : ComponentActivity() {
 fun LocalRideDriverApp() {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
-  val credentialManager = remember(context) { GoogleAuthHelper.safeCredentialManager(context) }
   val prefs = remember(context) { DriverPrefs(context) }
   val firebaseAuth = remember(context) { GoogleAuthHelper.safeAuth(context) }
   var activeDriverId by remember {
@@ -155,22 +154,6 @@ fun LocalRideDriverApp() {
       } catch (e: Exception) {
         e.printStackTrace()
       }
-    }
-  }
-
-  // Non-blocking background silent sign-in only if onboarding was already completed;
-  // first-time launch renders Step 1 (Language Selection) immediately with zero blocking.
-  LaunchedEffect(Unit) {
-    if (activeDriverId == null && prefs.isOnboardingComplete()) {
-      GoogleAuthHelper.attemptAutoSignIn(
-        context = context,
-        credentialManager = credentialManager,
-        scope = scope,
-        onAuthSuccess = {
-          activeDriverId = GoogleAuthHelper.safeCurrentUser(context)?.uid ?: prefs.getSavedUserId()
-        },
-        onUnauthenticated = {},
-      )
     }
   }
 
@@ -222,7 +205,6 @@ private fun AuthenticatedDriverRoot(
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
-  val credentialManager = remember(context) { GoogleAuthHelper.safeCredentialManager(context) }
 
   val viewModel: DriverMainViewModel = viewModel(
     key = currentUserId,
@@ -282,7 +264,7 @@ private fun AuthenticatedDriverRoot(
             Spacer(Modifier.height(4.dp))
             Button(
               onClick = {
-                GoogleAuthHelper.signOut(credentialManager, scope, context = context) {
+                GoogleAuthHelper.signOut(scope, context = context) {
                   onSignedOut()
                 }
               },
@@ -441,13 +423,13 @@ private fun AuthenticatedDriverRoot(
                       viewModel.saveEditedProfile(updates, onDone)
                     },
                     onSignOut = {
-                      GoogleAuthHelper.signOut(credentialManager, scope, context = context) {
+                      GoogleAuthHelper.signOut(scope, context = context) {
                         onSignedOut()
                       }
                     },
                     onDeleteProfile = {
                       viewModel.deleteProfile {
-                        GoogleAuthHelper.signOut(credentialManager, scope, context = context) {
+                        GoogleAuthHelper.signOut(scope, context = context) {
                           onSignedOut()
                         }
                       }

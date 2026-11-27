@@ -50,6 +50,10 @@ data class AppStrings(
   val signInWithGoogle: String,
   val checkingProfile: String,
   val noOtpNeededNote: String,
+  val orEnterGmailLabel: String,
+  val gmailHint: String,
+  val continueWithEmailBtn: String,
+  val invalidEmailError: String,
 
   // Step 6: Name & Mobile
   val profileDetailsTitle: String,
@@ -224,6 +228,10 @@ private val BengaliStrings = AppStrings(
   signInWithGoogle = "Google দিয়ে সাইন ইন করুন",
   checkingProfile = "প্রোফাইল যাচাই করা হচ্ছে...",
   noOtpNeededNote = "আগে থেকে রেজিস্টার করা থাকলে সরাসরি হোম স্ক্রিনে নিয়ে যাবে",
+  orEnterGmailLabel = "অথবা আপনার Gmail ঠিকানা লিখুন",
+  gmailHint = "driver@gmail.com",
+  continueWithEmailBtn = "ইমেইল দিয়ে এগিয়ে যান",
+  invalidEmailError = "দয়া করে একটি সঠিক Gmail ঠিকানা লিখুন",
 
   profileDetailsTitle = "আপনার নাম ও মোবাইল নম্বর",
   profileDetailsSubtitle = "সঠিক নাম ও ১০ সংখ্যার WhatsApp/মোবাইল নম্বর দিন",
@@ -355,6 +363,10 @@ private val HindiStrings = AppStrings(
   signInWithGoogle = "Google से साइन इन करें",
   checkingProfile = "प्रोफ़ाइल जाँचा जा रहा है...",
   noOtpNeededNote = "पहले से रजिस्टर्ड होने पर सीधे होम स्क्रीन खुलेगी",
+  orEnterGmailLabel = "या अपना Gmail पता दर्ज करें",
+  gmailHint = "driver@gmail.com",
+  continueWithEmailBtn = "ईमेल के साथ आगे बढ़ें",
+  invalidEmailError = "कृपया एक सही Gmail पता दर्ज करें",
 
   profileDetailsTitle = "पूरा नाम और मोबाइल नंबर",
   profileDetailsSubtitle = "अपना नाम और 10-अंकीय मोबाइल/WhatsApp नंबर दर्ज करें",
@@ -486,6 +498,10 @@ private val EnglishStrings = AppStrings(
   signInWithGoogle = "Sign in with Google",
   checkingProfile = "Checking your driver profile...",
   noOtpNeededNote = "Already registered? You'll go straight to Home.",
+  orEnterGmailLabel = "Or enter your Gmail address",
+  gmailHint = "driver@gmail.com",
+  continueWithEmailBtn = "Continue with Email",
+  invalidEmailError = "Please enter a valid email address",
 
   profileDetailsTitle = "Full Name & Mobile Number",
   profileDetailsSubtitle = "Confirm your name and 10-digit Mobile / WhatsApp number",
