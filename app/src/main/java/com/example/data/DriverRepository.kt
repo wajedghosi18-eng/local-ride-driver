@@ -38,7 +38,10 @@ class DriverRepository(
   private fun requireDb(): FirebaseFirestore =
     db
       ?: appContext?.let { safeFirestore(it) }
-      ?: throw IllegalStateException("Firebase Firestore is not initialized.")
+      ?: throw IllegalStateException(
+        lastInitError?.let { "Firebase Firestore is not initialized ($it)." }
+          ?: "Firebase Firestore is not initialized."
+      )
 
   private fun requireUserId(): String =
     auth?.currentUser?.uid
@@ -397,13 +400,17 @@ class DriverRepository(
     const val COLLECTION_APP_SETTINGS = "app_settings"
     const val DOC_DRIVER_APP_VERSION = "driver_app_version"
 
+    @Volatile
+    private var lastInitError: String? = null
+
     private fun ensureFirebase(context: Context): Boolean =
       GoogleAuthHelper.ensureFirebaseInitialized(context)
 
     fun safeAuth(context: Context): FirebaseAuth? {
       return try {
         if (!ensureFirebase(context)) return null
-        Firebase.auth
+        val app = FirebaseApp.getApps(context.applicationContext).firstOrNull()
+        if (app != null) FirebaseAuth.getInstance(app) else Firebase.auth
       } catch (e: Exception) {
         e.printStackTrace()
         null
@@ -413,21 +420,36 @@ class DriverRepository(
     fun safeFirestore(context: Context): FirebaseFirestore? {
       return try {
         val appCtx = context.applicationContext
-        if (!ensureFirebase(appCtx)) return null
-        val activeProjectId = runCatching { FirebaseApp.getInstance().options.projectId }.getOrNull()
+        if (!ensureFirebase(appCtx)) {
+          lastInitError = "FirebaseApp failed to initialize"
+          return null
+        }
+        val firebaseApp = FirebaseApp.getApps(appCtx).firstOrNull()
+        if (firebaseApp == null) {
+          lastInitError = "No FirebaseApp instances registered"
+          return null
+        }
+        val activeProjectId = firebaseApp.options.projectId
         val dbId = runCatching { appCtx.getString(R.string.firestore_database_id).trim() }.getOrNull()
-        if (activeProjectId == "local-deal-683e8" || dbId.isNullOrBlank()) {
-          FirebaseFirestore.getInstance()
+        val instance = if (
+          activeProjectId == "local-deal-683e8" ||
+          activeProjectId == "local-deal-663e8" ||
+          dbId.isNullOrBlank()
+        ) {
+          FirebaseFirestore.getInstance(firebaseApp)
         } else {
           try {
-            FirebaseFirestore.getInstance(dbId)
+            FirebaseFirestore.getInstance(firebaseApp, dbId)
           } catch (e: Exception) {
             e.printStackTrace()
-            FirebaseFirestore.getInstance()
+            FirebaseFirestore.getInstance(firebaseApp)
           }
         }
+        lastInitError = null
+        instance
       } catch (e: Exception) {
         e.printStackTrace()
+        lastInitError = "${e.javaClass.simpleName}: ${e.localizedMessage ?: e.message}"
         null
       }
     }

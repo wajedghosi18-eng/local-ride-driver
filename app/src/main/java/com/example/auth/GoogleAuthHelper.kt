@@ -44,23 +44,49 @@ object GoogleAuthHelper {
     }
   }
 
-  private fun readApiKeyFromAssets(context: Context): String? {
+  private data class ParsedGoogleServicesConfig(
+    val apiKey: String? = null,
+    val projectId: String? = null,
+    val applicationId: String? = null,
+    val storageBucket: String? = null,
+    val gcmSenderId: String? = null,
+  )
+
+  private fun readConfigFromAssets(context: Context): ParsedGoogleServicesConfig? {
     return try {
       val jsonText = context.assets.open("google-services.json").bufferedReader().use { it.readText() }
       val root = JSONObject(jsonText)
-      val clients = root.optJSONArray("client") ?: return null
-      for (i in 0 until clients.length()) {
-        val client = clients.optJSONObject(i) ?: continue
-        val pkg = client.optJSONObject("client_info")
-          ?.optJSONObject("android_client_info")
-          ?.optString("package_name")
-        if (pkg == context.packageName || clients.length() == 1) {
-          val keys = client.optJSONArray("api_key")
-          val key = keys?.optJSONObject(0)?.optString("current_key")?.trim()
-          if (!key.isNullOrEmpty()) return key
+      val projectInfo = root.optJSONObject("project_info")
+      val projectId = projectInfo?.optString("project_id")?.trim()?.takeIf { it.isNotEmpty() }
+      val storageBucket = projectInfo?.optString("storage_bucket")?.trim()?.takeIf { it.isNotEmpty() }
+      val gcmSenderId = projectInfo?.optString("project_number")?.trim()?.takeIf { it.isNotEmpty() }
+
+      val clients = root.optJSONArray("client")
+      var matchedApiKey: String? = null
+      var matchedAppId: String? = null
+      if (clients != null) {
+        for (i in 0 until clients.length()) {
+          val client = clients.optJSONObject(i) ?: continue
+          val clientInfo = client.optJSONObject("client_info")
+          val pkg = clientInfo?.optJSONObject("android_client_info")?.optString("package_name")
+          if (pkg == context.packageName || (matchedAppId == null && i == clients.length() - 1)) {
+            matchedAppId = clientInfo?.optString("mobilesdk_app_id")?.trim()?.takeIf { it.isNotEmpty() }
+            matchedApiKey = client.optJSONArray("api_key")
+              ?.optJSONObject(0)
+              ?.optString("current_key")
+              ?.trim()
+              ?.takeIf { it.isNotEmpty() }
+            if (pkg == context.packageName) break
+          }
         }
       }
-      null
+      ParsedGoogleServicesConfig(
+        apiKey = matchedApiKey,
+        projectId = projectId,
+        applicationId = matchedAppId,
+        storageBucket = storageBucket,
+        gcmSenderId = gcmSenderId,
+      )
     } catch (_: Exception) {
       null
     }
@@ -78,17 +104,25 @@ object GoogleAuthHelper {
         return true
       }
 
-      val apiKey = resolveStringResource(appContext, "google_api_key")
-        ?: readApiKeyFromAssets(appContext)
+      val assetConfig = readConfigFromAssets(appContext)
+      val apiKey = resolveStringResource(appContext, "google_api_key") ?: assetConfig?.apiKey
       if (apiKey.isNullOrBlank()) {
-        Log.e(TAG, "Firebase fallback missing google_api_key; check app/google-services.json")
+        Log.e(TAG, "Firebase fallback missing google_api_key; check google-services.json")
         return false
       }
 
-      val projectId = resolveStringResource(appContext, "project_id") ?: FALLBACK_PROJECT_ID
-      val applicationId = resolveStringResource(appContext, "google_app_id") ?: FALLBACK_APP_ID
-      val storageBucket = resolveStringResource(appContext, "google_storage_bucket") ?: FALLBACK_STORAGE_BUCKET
-      val gcmSenderId = resolveStringResource(appContext, "gcm_defaultSenderId") ?: FALLBACK_GCM_SENDER_ID
+      val projectId = resolveStringResource(appContext, "project_id")
+        ?: assetConfig?.projectId
+        ?: FALLBACK_PROJECT_ID
+      val applicationId = resolveStringResource(appContext, "google_app_id")
+        ?: assetConfig?.applicationId
+        ?: FALLBACK_APP_ID
+      val storageBucket = resolveStringResource(appContext, "google_storage_bucket")
+        ?: assetConfig?.storageBucket
+        ?: FALLBACK_STORAGE_BUCKET
+      val gcmSenderId = resolveStringResource(appContext, "gcm_defaultSenderId")
+        ?: assetConfig?.gcmSenderId
+        ?: FALLBACK_GCM_SENDER_ID
 
       val options = FirebaseOptions.Builder()
         .setProjectId(projectId)
