@@ -53,8 +53,8 @@ fun MyRidesTab(
   myRidesState: UiState<List<TotoRide>>,
   strings: AppStrings,
   isBusy: Boolean,
-  onCompleteRide: (String) -> Unit,
-  onCancelRide: (String) -> Unit,
+  onCompleteRide: (TotoRide) -> Unit,
+  onCancelRide: (TotoRide) -> Unit,
 ) {
   val voiceNotePlayer = remember { VoiceNotePlayer() }
   var playingRideId by remember { mutableStateOf<String?>(null) }
@@ -136,7 +136,7 @@ fun MyRidesTab(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxSize(),
           ) {
-            items(rides, key = { it.id }) { ride ->
+            items(rides, key = { "${it.sourceCollection}_${it.id}" }) { ride ->
               RideHistoryCard(
                 ride = ride,
                 strings = strings,
@@ -152,11 +152,11 @@ fun MyRidesTab(
                 },
                 onComplete = {
                   voiceNotePlayer.stop()
-                  onCompleteRide(ride.id)
+                  onCompleteRide(ride)
                 },
                 onCancel = {
                   voiceNotePlayer.stop()
-                  onCancelRide(ride.id)
+                  onCancelRide(ride)
                 },
               )
             }
@@ -177,19 +177,20 @@ private fun RideHistoryCard(
   onComplete: () -> Unit,
   onCancel: () -> Unit,
 ) {
-  val statusLabel = when (ride.status) {
-    "accepted" -> strings.statusAccepted
-    "completed" -> strings.statusCompleted
+  val isActiveStatus = ride.status.lowercase() in setOf("accepted", "started", "ongoing", "in_progress")
+  val statusLabel = when {
+    isActiveStatus -> strings.statusAccepted
+    ride.status.equals("completed", ignoreCase = true) -> strings.statusCompleted
     else -> strings.statusCancelled
   }
-  val badgeColor = when (ride.status) {
-    "accepted" -> MaterialTheme.colorScheme.secondaryContainer
-    "completed" -> OnlineGreenSurface
+  val badgeColor = when {
+    isActiveStatus -> MaterialTheme.colorScheme.secondaryContainer
+    ride.status.equals("completed", ignoreCase = true) -> OnlineGreenSurface
     else -> MaterialTheme.colorScheme.errorContainer
   }
-  val badgeTextColor = when (ride.status) {
-    "accepted" -> MaterialTheme.colorScheme.onSecondaryContainer
-    "completed" -> Color(0xFF14532D)
+  val badgeTextColor = when {
+    isActiveStatus -> MaterialTheme.colorScheme.onSecondaryContainer
+    ride.status.equals("completed", ignoreCase = true) -> Color(0xFF14532D)
     else -> MaterialTheme.colorScheme.onErrorContainer
   }
 
@@ -198,8 +199,8 @@ private fun RideHistoryCard(
     color = MaterialTheme.colorScheme.surface,
     tonalElevation = 2.dp,
     border = BorderStroke(
-      width = if (ride.status == "accepted") 1.5.dp else 1.dp,
-      color = if (ride.status == "accepted") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+      width = if (isActiveStatus) 1.5.dp else 1.dp,
+      color = if (isActiveStatus) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
     ),
     modifier = Modifier
       .fillMaxWidth()
@@ -228,6 +229,17 @@ private fun RideHistoryCard(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
           )
         }
+        Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+          Text(
+            text = ride.sourceCollection,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+          )
+        }
       }
 
       RideRouteDetails(ride = ride, strings = strings)
@@ -239,7 +251,7 @@ private fun RideHistoryCard(
         onTogglePlay = onToggleVoice,
       )
 
-      if (ride.status == "accepted") {
+      if (isActiveStatus) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(10.dp),

@@ -13,6 +13,7 @@ import com.example.model.TotoRide
 import com.example.model.UiState
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -21,8 +22,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class DriverMainViewModel(
@@ -30,6 +36,8 @@ class DriverMainViewModel(
   private val prefs: DriverPrefs,
   private val currentUserId: String,
 ) : ViewModel() {
+
+  private val _dismissedRideKeys = MutableStateFlow<Set<String>>(emptySet())
 
   val driverProfileState: StateFlow<UiState<TotoDriver?>> =
     repository.observeDriverProfile(currentUserId)
@@ -49,17 +57,38 @@ class DriverMainViewModel(
         initialValue = UiState.Loading,
       )
 
+  @OptIn(ExperimentalCoroutinesApi::class)
   val pendingRidesState: StateFlow<UiState<List<TotoRide>>> =
-    repository.observePendingRides(currentUserId)
-      .map<List<TotoRide>, UiState<List<TotoRide>>> { UiState.Success(it) }
-      .catch { error ->
-        val firestoreError = generateSequence(error) { it.cause }
-          .filterIsInstance<FirebaseFirestoreException>()
-          .firstOrNull()
-        if (firestoreError == null && error is CancellationException) throw error
-        val rootError = firestoreError ?: error
-        Log.w(TAG, "Error observing pending rides", rootError)
-        emit(UiState.Error(rootError.message ?: "Failed to observe incoming rides"))
+    driverProfileState
+      .map { state ->
+        val driver = (state as? UiState.Success)?.data
+        if (driver != null && driver.online) {
+          Triple(true, driver.lat, driver.lng)
+        } else {
+          Triple(false, 0.0, 0.0)
+        }
+      }
+      .distinctUntilChanged { old, new -> old.first == new.first }
+      .flatMapLatest { (isOnline, lat, lng) ->
+        if (!isOnline) {
+          flowOf(UiState.Success(emptyList()))
+        } else {
+          combine(
+            repository.observePendingRides(currentUserId, lat, lng),
+            _dismissedRideKeys,
+          ) { rides, dismissed ->
+            val filtered = rides.filter { "${it.sourceCollection}/${it.id}" !in dismissed }
+            UiState.Success(filtered) as UiState<List<TotoRide>>
+          }.catch { error ->
+            val firestoreError = generateSequence(error) { it.cause }
+              .filterIsInstance<FirebaseFirestoreException>()
+              .firstOrNull()
+            if (firestoreError == null && error is CancellationException) throw error
+            val rootError = firestoreError ?: error
+            Log.w(TAG, "Error observing pending rides", rootError)
+            emit(UiState.Error(rootError.message ?: "Failed to observe incoming rides"))
+          }
+        }
       }
       .stateIn(
         scope = viewModelScope,
@@ -138,10 +167,10 @@ class DriverMainViewModel(
     }
   }
 
-  fun acceptRide(rideId: String, driverName: String) {
+  fun acceptRide(ride: TotoRide, driver: TotoDriver) {
     viewModelScope.launch {
       _isBusy.value = true
-      val res = repository.acceptRide(rideId, driverName)
+      val res = repository.acceptRide(ride, driver)
       _isBusy.value = false
       res.onFailure { err ->
         _feedback.emit(err.localizedMessage ?: "Ride may have already been taken")
@@ -149,19 +178,28 @@ class DriverMainViewModel(
     }
   }
 
-  fun rejectRide(rideId: String) {
+  fun startRideWithOtp(ride: TotoRide) {
     viewModelScope.launch {
-      val res = repository.rejectRide(rideId)
+      _isBusy.value = true
+      val res = repository.startRide(ride)
+      _isBusy.value = false
       res.onFailure { err ->
-        _feedback.emit(err.localizedMessage ?: "Failed to dismiss ride")
+        _feedback.emit(err.localizedMessage ?: "Failed to start ride")
       }
     }
   }
 
-  fun updateRideStatus(rideId: String, status: String) {
+  fun rejectRide(ride: TotoRide) {
+    _dismissedRideKeys.update { it + "${ride.sourceCollection}/${ride.id}" }
+    viewModelScope.launch {
+      repository.rejectRide(ride)
+    }
+  }
+
+  fun updateRideStatus(ride: TotoRide, status: String) {
     viewModelScope.launch {
       _isBusy.value = true
-      val res = repository.updateRideStatus(rideId, status)
+      val res = repository.updateRideStatus(ride, status)
       _isBusy.value = false
       res.onFailure { err ->
         _feedback.emit(err.localizedMessage ?: "Failed to update ride status")

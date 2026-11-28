@@ -6,7 +6,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,21 +20,27 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -48,10 +56,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.localization.AppStrings
@@ -82,16 +92,17 @@ fun HomeTab(
   myRidesState: UiState<List<TotoRide>>,
   isBusy: Boolean,
   onToggleOnline: (Boolean, Double, Double) -> Unit,
-  onAcceptRide: (String, String) -> Unit,
-  onRejectRide: (String) -> Unit,
-  onCompleteRide: (String) -> Unit,
+  onAcceptRide: (TotoRide) -> Unit,
+  onStartRideWithOtp: (TotoRide) -> Unit,
+  onRejectRide: (TotoRide) -> Unit,
+  onCompleteRide: (TotoRide) -> Unit,
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   val ringtonePlayer = remember(context) { RideRingtonePlayer(context) }
   val voiceNotePlayer = remember { VoiceNotePlayer() }
   var playingRideId by remember { mutableStateOf<String?>(null) }
-  var lastAlertedRideId by remember { mutableStateOf<String?>(null) }
+  var lastAlertedRideKey by remember { mutableStateOf<String?>(null) }
 
   DisposableEffect(Unit) {
     onDispose {
@@ -101,7 +112,7 @@ fun HomeTab(
   }
 
   val activeRide = (myRidesState as? UiState.Success)?.data
-    ?.firstOrNull { it.status == "accepted" }
+    ?.firstOrNull { it.status.lowercase() in setOf("accepted", "started", "ongoing", "in_progress") }
 
   val nextPendingRide = if (driver.online && activeRide == null) {
     (pendingRidesState as? UiState.Success)?.data?.firstOrNull()
@@ -109,12 +120,16 @@ fun HomeTab(
     null
   }
 
-  LaunchedEffect(nextPendingRide?.id, driver.online) {
-    val rideId = nextPendingRide?.id
-    if (driver.online && rideId != null && rideId != lastAlertedRideId) {
-      lastAlertedRideId = rideId
-      ringtonePlayer.playAlert()
-    } else if (!driver.online || rideId == null) {
+  val pendingRideKey = nextPendingRide?.let { "${it.sourceCollection}/${it.id}" }
+
+  LaunchedEffect(pendingRideKey, driver.online) {
+    if (driver.online && pendingRideKey != null) {
+      if (pendingRideKey != lastAlertedRideKey) {
+        lastAlertedRideKey = pendingRideKey
+        ringtonePlayer.playAlert()
+      }
+    } else {
+      lastAlertedRideKey = null
       ringtonePlayer.stop()
     }
   }
@@ -265,6 +280,40 @@ fun HomeTab(
             )
           }
         }
+
+        // Live 3-collection radar indicator when driver is ONLINE
+        AnimatedVisibility(visible = driver.online) {
+          Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFFECFDF5),
+            border = BorderStroke(1.dp, OnlineGreen.copy(alpha = 0.4f)),
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(top = 10.dp)
+              .testTag("radar_active_indicator"),
+          ) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Box(
+                modifier = Modifier
+                  .size(9.dp)
+                  .clip(CircleShape)
+                  .background(OnlineGreen),
+              )
+              Spacer(Modifier.width(8.dp))
+              Text(
+                text = strings.radarActiveStatus,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF14532D),
+              )
+            }
+          }
+        }
       }
     }
 
@@ -279,27 +328,52 @@ fun HomeTab(
       strings = strings,
     )
 
-    // Active Accepted Ride Card
+    // Active Ride Screen (4-Digit Start PIN verification + Complete Ride)
     AnimatedVisibility(visible = activeRide != null) {
       activeRide?.let { ride ->
+        var enteredPin by remember(ride.id, ride.sourceCollection) { mutableStateOf("") }
+        var pinError by remember(ride.id, ride.sourceCollection) { mutableStateOf<String?>(null) }
+        val isRideStarted = ride.status.lowercase() in setOf("started", "ongoing", "in_progress")
+
         Surface(
           shape = RoundedCornerShape(22.dp),
           color = MaterialTheme.colorScheme.primaryContainer,
           border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+          modifier = Modifier.testTag("active_ride_card"),
         ) {
           Column(
             modifier = Modifier
               .fillMaxWidth()
               .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
           ) {
-            Text(
-              text = strings.activeRideBanner,
-              style = MaterialTheme.typography.labelLarge,
-              fontWeight = FontWeight.Bold,
-              color = MaterialTheme.colorScheme.primary,
-            )
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                text = strings.activeRideBanner,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+              )
+              Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = if (isRideStarted) OnlineGreenSurface else MaterialTheme.colorScheme.surface,
+              ) {
+                Text(
+                  text = if (isRideStarted) strings.pinVerifiedStartedBadge else ride.sourceCollection,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.Bold,
+                  color = if (isRideStarted) Color(0xFF14532D) else MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+              }
+            }
+
             RideRouteDetails(ride = ride, strings = strings)
+
             VoiceNotePlayerRow(
               voiceNoteUrl = ride.voiceNoteUrl,
               isPlaying = playingRideId == ride.id,
@@ -313,35 +387,133 @@ fun HomeTab(
                 )
               },
             )
+
+            if (!isRideStarted) {
+              Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+              ) {
+                Column(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                  verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                      imageVector = Icons.Filled.Lock,
+                      contentDescription = null,
+                      tint = MaterialTheme.colorScheme.primary,
+                      modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                      text = strings.enterStartPinLabel,
+                      style = MaterialTheme.typography.titleSmall,
+                      fontWeight = FontWeight.Bold,
+                    )
+                  }
+
+                  OutlinedTextField(
+                    value = enteredPin,
+                    onValueChange = { raw ->
+                      val digits = raw.filter { it.isDigit() }.take(4)
+                      enteredPin = digits
+                      pinError = null
+                    },
+                    placeholder = { Text(strings.startPinHint) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = pinError != null,
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .testTag("start_pin_input"),
+                    shape = RoundedCornerShape(12.dp),
+                  )
+
+                  if (pinError != null) {
+                    Text(
+                      text = pinError!!,
+                      style = MaterialTheme.typography.bodySmall,
+                      color = OfflineRed,
+                      fontWeight = FontWeight.Medium,
+                    )
+                  }
+
+                  Button(
+                    onClick = {
+                      val expectedOtp = ride.rideOtp.trim()
+                      if (expectedOtp.isNotEmpty() && enteredPin.trim() != expectedOtp) {
+                        pinError = strings.pinMismatchError
+                      } else {
+                        pinError = null
+                        onStartRideWithOtp(ride)
+                      }
+                    },
+                    enabled = !isBusy,
+                    colors = ButtonDefaults.buttonColors(
+                      containerColor = AmberCaptain,
+                      contentColor = Color(0xFF1E293B),
+                    ),
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .height(48.dp)
+                      .testTag("verify_start_pin_button"),
+                    shape = RoundedCornerShape(12.dp),
+                  ) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(strings.verifyPinAndStartBtn, fontWeight = FontWeight.Bold)
+                  }
+                }
+              }
+            }
+
             Button(
               onClick = {
-                voiceNotePlayer.stop()
-                onCompleteRide(ride.id)
+                val expectedOtp = ride.rideOtp.trim()
+                if (!isRideStarted && expectedOtp.isNotEmpty() && enteredPin.trim() != expectedOtp) {
+                  pinError = strings.pinMismatchError
+                } else {
+                  pinError = null
+                  voiceNotePlayer.stop()
+                  onCompleteRide(ride)
+                }
               },
               enabled = !isBusy,
+              colors = ButtonDefaults.buttonColors(
+                containerColor = OnlineGreen,
+                contentColor = Color.White,
+              ),
               modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
+                .height(54.dp)
                 .testTag("home_complete_ride_button"),
               shape = RoundedCornerShape(14.dp),
             ) {
               Icon(Icons.Filled.Check, contentDescription = null)
               Spacer(Modifier.width(8.dp))
-              Text(strings.completeRide, style = MaterialTheme.typography.titleMedium)
+              Text(
+                strings.completeRide,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+              )
             }
           }
         }
       }
     }
 
-    // Incoming Pending Ride Request Card (No pricing/fare, no Call button)
+    // Incoming Pending Ride Request Card (Multi-collection: toto_rides / local_rides / ride_bookings)
     AnimatedVisibility(visible = nextPendingRide != null) {
       nextPendingRide?.let { ride ->
         Surface(
           shape = RoundedCornerShape(22.dp),
           color = MaterialTheme.colorScheme.surface,
-          border = BorderStroke(2.dp, AmberCaptain),
-          tonalElevation = 4.dp,
+          border = BorderStroke(2.5.dp, AmberCaptain),
+          tonalElevation = 6.dp,
+          modifier = Modifier.testTag("incoming_ride_request_card"),
         ) {
           Column(
             modifier = Modifier
@@ -349,19 +521,40 @@ fun HomeTab(
               .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
           ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(
-                imageVector = Icons.Filled.NotificationsActive,
-                contentDescription = null,
-                tint = AmberCaptain,
-              )
-              Spacer(Modifier.width(8.dp))
-              Text(
-                text = strings.incomingRequestBadge,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFFB45309),
-              )
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f),
+              ) {
+                Icon(
+                  imageVector = Icons.Filled.NotificationsActive,
+                  contentDescription = null,
+                  tint = AmberCaptain,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                  text = strings.incomingRequestBadge,
+                  style = MaterialTheme.typography.titleMedium,
+                  fontWeight = FontWeight.Bold,
+                  color = Color(0xFFB45309),
+                )
+              }
+              Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+              ) {
+                Text(
+                  text = ride.sourceCollection,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.SemiBold,
+                  color = MaterialTheme.colorScheme.onSecondaryContainer,
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+              }
             }
 
             RideRouteDetails(ride = ride, strings = strings)
@@ -389,7 +582,7 @@ fun HomeTab(
                 onClick = {
                   ringtonePlayer.stop()
                   voiceNotePlayer.stop()
-                  onRejectRide(ride.id)
+                  onRejectRide(ride)
                 },
                 enabled = !isBusy,
                 colors = ButtonDefaults.outlinedButtonColors(
@@ -411,7 +604,7 @@ fun HomeTab(
                 onClick = {
                   ringtonePlayer.stop()
                   voiceNotePlayer.stop()
-                  onAcceptRide(ride.id, driver.fullName)
+                  onAcceptRide(ride)
                 },
                 enabled = !isBusy,
                 colors = ButtonDefaults.buttonColors(
@@ -484,7 +677,7 @@ fun RideRouteDetails(
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-          text = ride.passengerName,
+          text = ride.passengerName.ifBlank { "Passenger" },
           style = MaterialTheme.typography.titleMedium,
           fontWeight = FontWeight.Bold,
         )
@@ -529,6 +722,28 @@ fun RideRouteDetails(
         )
         Text(
           text = ride.destination,
+          style = MaterialTheme.typography.bodyLarge,
+          fontWeight = FontWeight.SemiBold,
+        )
+      }
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Icon(
+        imageVector = Icons.Filled.DirectionsCar,
+        contentDescription = strings.vehicleTypeLabel,
+        tint = AmberCaptain,
+        modifier = Modifier.size(20.dp),
+      )
+      Spacer(Modifier.width(8.dp))
+      Column {
+        Text(
+          text = strings.vehicleTypeLabel,
+          style = MaterialTheme.typography.labelMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+          text = ride.vehicleType.ifBlank { "toto" }.replaceFirstChar { it.uppercase() },
           style = MaterialTheme.typography.bodyLarge,
           fontWeight = FontWeight.SemiBold,
         )

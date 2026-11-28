@@ -395,25 +395,28 @@ private fun AuthenticatedDriverRoot(
                     onToggleOnline = { online, lat, lng ->
                       viewModel.toggleOnline(online, lat, lng)
                     },
-                    onAcceptRide = { rideId, driverName ->
-                      viewModel.acceptRide(rideId, driverName)
+                    onAcceptRide = { ride ->
+                      viewModel.acceptRide(ride, driver)
                     },
-                    onRejectRide = { rideId ->
-                      viewModel.rejectRide(rideId)
+                    onStartRideWithOtp = { ride ->
+                      viewModel.startRideWithOtp(ride)
                     },
-                    onCompleteRide = { rideId ->
-                      viewModel.updateRideStatus(rideId, "completed")
+                    onRejectRide = { ride ->
+                      viewModel.rejectRide(ride)
+                    },
+                    onCompleteRide = { ride ->
+                      viewModel.updateRideStatus(ride, "completed")
                     },
                   )
                   1 -> MyRidesTab(
                     myRidesState = myRidesState,
                     strings = strings,
                     isBusy = isBusy,
-                    onCompleteRide = { rideId ->
-                      viewModel.updateRideStatus(rideId, "completed")
+                    onCompleteRide = { ride ->
+                      viewModel.updateRideStatus(ride, "completed")
                     },
-                    onCancelRide = { rideId ->
-                      viewModel.updateRideStatus(rideId, "cancelled")
+                    onCancelRide = { ride ->
+                      viewModel.updateRideStatus(ride, "cancelled")
                     },
                   )
                   2 -> ProfileTab(

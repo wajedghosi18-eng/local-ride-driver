@@ -152,8 +152,10 @@ data class TotoDriver(
 @IgnoreExtraProperties
 data class TotoRide(
   @DocumentId val id: String = "",
+  val sourceCollection: String = "toto_rides",
   val passengerId: String = "",
   val passengerName: String = "",
+  val passengerPhone: String = "",
   val pickupVillage: String = "",
   val destination: String = "",
   val pickupLat: Double = 0.0,
@@ -163,6 +165,7 @@ data class TotoRide(
   val driverId: String = "",
   val driverName: String = "",
   val vehicleType: String = "toto",
+  val rideOtp: String = "",
   val district: String = "",
   val rejectedBy: List<String> = emptyList(),
   val createdAt: Timestamp? = null,

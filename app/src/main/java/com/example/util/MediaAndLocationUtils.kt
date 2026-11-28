@@ -11,6 +11,9 @@ import android.media.Ringtone
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Base64
 import android.util.Log
 import androidx.core.content.FileProvider
@@ -151,15 +154,62 @@ object MediaAndLocationUtils {
 }
 
 class RideRingtonePlayer(private val context: Context) {
+  private var mediaPlayer: MediaPlayer? = null
   private var ringtone: Ringtone? = null
+  private var vibrator: Vibrator? = null
 
+  @Suppress("DEPRECATION")
   fun playAlert() {
     try {
       stop()
-      val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-      ringtone = RingtoneManager.getRingtone(context.applicationContext, uri)?.apply {
-        play()
+      val appCtx = context.applicationContext
+      val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+        ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
+      if (uri != null) {
+        val startedMediaPlayer = try {
+          MediaPlayer().apply {
+            setAudioAttributes(
+              AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            )
+            setDataSource(appCtx, uri)
+            isLooping = true
+            prepare()
+            start()
+          }.also { mediaPlayer = it }
+          true
+        } catch (mpError: Exception) {
+          Log.w("RideAlert", "MediaPlayer ringtone fallback: ${mpError.message}")
+          false
+        }
+
+        if (!startedMediaPlayer) {
+          ringtone = RingtoneManager.getRingtone(appCtx, uri)?.apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+              isLooping = true
+            }
+            play()
+          }
+        }
+      }
+
+      val vib = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        (appCtx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+      } else {
+        appCtx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+      }
+      vibrator = vib
+      if (vib?.hasVibrator() == true) {
+        val pattern = longArrayOf(0L, 650L, 450L)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          vib.vibrate(VibrationEffect.createWaveform(pattern, 0))
+        } else {
+          vib.vibrate(pattern, 0)
+        }
       }
     } catch (e: Exception) {
       Log.w("RideAlert", "Unable to play ringtone alert: ${e.message}")
@@ -168,9 +218,25 @@ class RideRingtonePlayer(private val context: Context) {
 
   fun stop() {
     try {
+      mediaPlayer?.apply {
+        if (isPlaying) stop()
+        release()
+      }
+      mediaPlayer = null
+    } catch (_: Exception) {
+      mediaPlayer = null
+    }
+    try {
       ringtone?.stop()
       ringtone = null
     } catch (_: Exception) {
+      ringtone = null
+    }
+    try {
+      vibrator?.cancel()
+      vibrator = null
+    } catch (_: Exception) {
+      vibrator = null
     }
   }
 }
